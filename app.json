@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "OmerLock",
+    "slug": "omerlock",
+    "version": "1.0.0",
+    "icon": "./assets/icon-1024.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#05060A"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.omerlock.app",
+      "buildNumber": "1",
+      "icon": "./assets/icon-1024.png",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "remote-notification"
+        ],
+        "NSLocationWhenInUseUsageDescription": "OmerLock uses your location to calculate nightfall (tzeit hakochavim) for accurate reminders."
+      }
+    },
+    "android": {
+      "package": "com.omerlock.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#111B21",
+        "monochromeImage": "./assets/notification-icon.png"
+      },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#25D366"
+        }
+      ],
+      "expo-location"
+    ],
+    "extra": {
+      "fallbackTzeit": "20:30"
+    }
+  }
+}
