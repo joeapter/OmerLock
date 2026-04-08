@@ -26,6 +26,10 @@ const sanitizeSettings = (
 ): SettingsState => ({
   showBracha: partial?.showBracha ?? fallback.showBracha,
   nusach: partial?.nusach ?? fallback.nusach,
+  omerPreposition:
+    partial?.omerPreposition === 'laomer' || partial?.omerPreposition === 'baomer'
+      ? partial.omerPreposition
+      : fallback.omerPreposition,
   reminderBaseMinutes: sanitizeReminderMinutes(
     partial?.reminderBaseMinutes,
     fallback.reminderBaseMinutes

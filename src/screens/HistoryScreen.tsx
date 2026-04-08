@@ -7,6 +7,7 @@ import { CompletionRecord } from '../types';
 interface Props {
   completions: Record<string, CompletionRecord>;
   activeDay: number | null;
+  countWindow: 'tonight' | 'last_night';
   missedDays: number[];
 }
 
@@ -14,6 +15,7 @@ const statusForDay = (
   day: number,
   completions: Record<string, CompletionRecord>,
   activeDay: number | null,
+  countWindow: 'tonight' | 'last_night',
   missedDays: number[]
 ): { label: string; color: string } => {
   if (completions[String(day)]) {
@@ -25,7 +27,10 @@ const statusForDay = (
   }
 
   if (activeDay !== null && day === activeDay) {
-    return { label: 'Tonight', color: colors.textPrimary };
+    return {
+      label: countWindow === 'tonight' ? 'Tonight' : 'Last night',
+      color: colors.textPrimary
+    };
   }
 
   if (activeDay !== null && day > activeDay) {
@@ -35,7 +40,25 @@ const statusForDay = (
   return { label: 'Not counted', color: colors.textSecondary };
 };
 
-export const HistoryScreen = ({ completions, activeDay, missedDays }: Props) => (
+const formatMethodLabel = (method: CompletionRecord['method']): string => {
+  switch (method) {
+    case 'swipe_hold':
+      return 'Hold confirmation';
+    case 'enter_number':
+      return 'Entered day number';
+    case 'multiple_choice':
+      return 'Selected from choices';
+    case 'already_counted':
+    case 'already_counted_override':
+      return 'Marked as counted';
+    case 'bulk_confirm_past':
+      return 'Confirmed past days';
+    default:
+      return 'Counted';
+  }
+};
+
+export const HistoryScreen = ({ completions, activeDay, countWindow, missedDays }: Props) => (
   <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
     <View style={styles.headerCard}>
       <Text style={styles.headerTitle}>Omer Timeline</Text>
@@ -46,7 +69,7 @@ export const HistoryScreen = ({ completions, activeDay, missedDays }: Props) => 
 
     <View style={styles.listCard}>
       {Array.from({ length: 49 }, (_, idx) => idx + 1).map((day) => {
-        const status = statusForDay(day, completions, activeDay, missedDays);
+        const status = statusForDay(day, completions, activeDay, countWindow, missedDays);
         const completion = completions[String(day)];
 
         return (
@@ -59,7 +82,8 @@ export const HistoryScreen = ({ completions, activeDay, missedDays }: Props) => 
                 <Text style={styles.dayTitle}>Day {day}</Text>
                 {completion ? (
                   <Text style={styles.meta}>
-                    {new Date(completion.timestamp).toLocaleString()} • {completion.method}
+                    {new Date(completion.timestamp).toLocaleString()} •{' '}
+                    {formatMethodLabel(completion.method)}
                   </Text>
                 ) : null}
               </View>

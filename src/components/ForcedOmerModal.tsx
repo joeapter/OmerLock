@@ -9,17 +9,20 @@ import {
 } from 'react-native';
 
 import { colors, radius, spacing } from '../constants/theme';
-import { CompletionMethod, NusachKey } from '../types';
+import { CompletionMethod, NusachKey, OmerPreposition } from '../types';
 import { getNusachText } from '../utils/omerText';
-import { ConfirmationChallenge } from './ConfirmationChallenge';
 
 interface Props {
   visible: boolean;
   day: number;
+  countWindow: 'tonight' | 'last_night';
   nusach: NusachKey;
+  omerPreposition: OmerPreposition;
   brachaAllowed: boolean;
   hardcoreMode: boolean;
   defaultSnooze: 10 | 20 | 30;
+  reviewOnly?: boolean;
+  onReviewClose?: () => void;
   onCountComplete: (method: CompletionMethod) => Promise<void>;
   onSnooze: (minutes: 10 | 20 | 30) => Promise<void>;
   onAlreadyCounted: () => Promise<void>;
@@ -30,31 +33,34 @@ interface Props {
 export const ForcedOmerModal = ({
   visible,
   day,
+  countWindow,
   nusach,
+  omerPreposition,
   brachaAllowed,
   hardcoreMode,
   defaultSnooze,
+  reviewOnly = false,
+  onReviewClose,
   onCountComplete,
   onSnooze,
   onAlreadyCounted,
   onMissedEarlier,
   onDismissAfterAction
 }: Props) => {
-  const [showChallenge, setShowChallenge] = useState(false);
   const [busy, setBusy] = useState(false);
   const snoozeOptions = [
     defaultSnooze,
     ...[10, 20, 30].filter((value) => value !== defaultSnooze)
   ] as Array<10 | 20 | 30>;
+  const possessiveLabel = countWindow === 'tonight' ? "Tonight's" : "Last night's";
 
-  const nusachText = getNusachText(day, nusach, brachaAllowed);
+  const nusachText = getNusachText(day, nusach, brachaAllowed, omerPreposition);
 
   const withBusy = async (action: () => Promise<void>, keepOpen = false) => {
     setBusy(true);
     try {
       await action();
       if (!keepOpen) {
-        setShowChallenge(false);
         onDismissAfterAction();
       }
     } finally {
@@ -69,9 +75,19 @@ export const ForcedOmerModal = ({
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.title}>Tonight's Omer Count</Text>
+          {reviewOnly ? (
+            <View style={styles.reviewHeader}>
+              <View />
+              <TouchableOpacity onPress={onReviewClose} style={styles.closeButton}>
+                <Text style={styles.closeButtonText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          <Text style={styles.title}>{possessiveLabel} Omer Count</Text>
           <Text style={styles.subtitle}>
-            Complete tonight's count to clear reminders.
+            {reviewOnly
+              ? `Review ${possessiveLabel.toLowerCase()} bracha and count details.`
+              : `Complete ${possessiveLabel.toLowerCase()} count to clear reminders.`}
           </Text>
 
           {!brachaAllowed ? (
@@ -96,66 +112,62 @@ export const ForcedOmerModal = ({
             <Text style={styles.hebrewText}>{nusachText.harachaman}</Text>
           </View>
 
-          <View style={styles.actions}>
-            <TouchableOpacity
-              style={[styles.primaryButton, busy && styles.disabled]}
-              disabled={busy}
-              onPress={() => setShowChallenge(true)}
-            >
-              <Text style={styles.primaryButtonText}>Count Now</Text>
-            </TouchableOpacity>
+          {!reviewOnly ? (
+            <View style={styles.actions}>
+              <TouchableOpacity
+                style={[styles.primaryButton, busy && styles.disabled]}
+                disabled={busy}
+                onPress={() => withBusy(() => onCountComplete('swipe_hold'))}
+              >
+                <Text style={styles.primaryButtonText}>I Counted</Text>
+              </TouchableOpacity>
 
-            <View style={styles.snoozeCard}>
-              <Text style={styles.snoozeTitle}>Snooze reminder</Text>
-              <View style={styles.snoozeRow}>
-                {snoozeOptions.map((minutes) => (
-                  <TouchableOpacity
-                    key={minutes}
-                    disabled={busy}
-                    style={[styles.snoozePill, busy && styles.disabled]}
-                    onPress={() =>
-                      withBusy(
-                        () => onSnooze(minutes as 10 | 20 | 30),
-                        hardcoreMode
-                      )
-                    }
-                  >
-                    <Text style={styles.snoozeText}>
-                      {minutes}m{minutes === defaultSnooze ? ' default' : ''}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+              <View style={styles.snoozeCard}>
+                <Text style={styles.snoozeTitle}>Snooze reminder</Text>
+                <View style={styles.snoozeRow}>
+                  {snoozeOptions.map((minutes) => (
+                    <TouchableOpacity
+                      key={minutes}
+                      disabled={busy}
+                      style={[styles.snoozePill, busy && styles.disabled]}
+                      onPress={() =>
+                        withBusy(
+                          () => onSnooze(minutes as 10 | 20 | 30),
+                          hardcoreMode
+                        )
+                      }
+                    >
+                      <Text style={styles.snoozeText}>
+                        {minutes}m{minutes === defaultSnooze ? ' default' : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {hardcoreMode ? (
+                  <Text style={styles.hardcoreHint}>
+                    Hardcore mode: reminders every 5 min until you count.
+                  </Text>
+                ) : null}
               </View>
-              {hardcoreMode ? (
-                <Text style={styles.hardcoreHint}>
-                  Hardcore mode keeps this screen locked until tonight's count is done.
-                </Text>
-              ) : null}
+
+              <TouchableOpacity
+                style={[styles.secondaryButton, busy && styles.disabled]}
+                disabled={busy}
+                onPress={() => withBusy(onAlreadyCounted)}
+              >
+                <Text style={styles.secondaryButtonText}>Already Counted</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.secondaryButton, busy && styles.disabled]}
+                disabled={busy}
+                onPress={() => withBusy(onMissedEarlier, true)}
+              >
+                <Text style={styles.secondaryButtonText}>I missed a day</Text>
+              </TouchableOpacity>
             </View>
-
-            <TouchableOpacity
-              style={[styles.secondaryButton, busy && styles.disabled]}
-              disabled={busy}
-              onPress={() => withBusy(onAlreadyCounted)}
-            >
-              <Text style={styles.secondaryButtonText}>Mark as already counted</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.secondaryButton, busy && styles.disabled]}
-              disabled={busy}
-              onPress={() => withBusy(onMissedEarlier, true)}
-            >
-              <Text style={styles.secondaryButtonText}>I missed an earlier day</Text>
-            </TouchableOpacity>
-          </View>
-
-          {showChallenge ? (
-            <ConfirmationChallenge
-              day={day}
-              onSuccess={(method) => withBusy(() => onCountComplete(method))}
-            />
           ) : null}
+
         </ScrollView>
       </View>
     </Modal>
@@ -172,6 +184,24 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xl + spacing.md,
     paddingBottom: spacing.xl,
     gap: spacing.md
+  },
+  reviewHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  closeButton: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.surface
+  },
+  closeButtonText: {
+    color: colors.textPrimary,
+    fontFamily: 'SpaceGrotesk_700Bold',
+    fontSize: 12
   },
   title: {
     color: colors.textPrimary,

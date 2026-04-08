@@ -2,7 +2,8 @@ export type ChallengeType = 'swipe_hold' | 'enter_number' | 'multiple_choice';
 
 export const pickChallenge = (): ChallengeType => {
   const variants: ChallengeType[] = ['swipe_hold', 'enter_number', 'multiple_choice'];
-  return variants[Math.floor(Math.random() * variants.length)];
+  const selected = variants[Math.floor(Math.random() * variants.length)];
+  return selected ?? 'multiple_choice';
 };
 
 export const buildMultipleChoice = (targetDay: number): number[] => {

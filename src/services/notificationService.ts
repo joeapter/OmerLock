@@ -1,13 +1,35 @@
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 
 import { SettingsState } from '../types';
-import { minutesBetween } from '../utils/date';
+import { addDays, minutesBetween } from '../utils/date';
 import { getNotificationBody } from '../utils/omerText';
 
 const CHANNEL_NORMAL = 'omerlock-high';
 const CHANNEL_ESCALATED = 'omerlock-max';
 const CHANNEL_EXTREME = 'omerlock-max-persistent';
+
+// iOS hard limit: 64 scheduled local notifications total.
+//
+// Budget per scheduling cycle:
+//   1   omer_daily_safety  — DAILY repeating, fires every night at nightfall
+//  25   omer_future        — 5 nights × 5 reminders, fire without app open
+//  20   omer_burst         — tonight's intensive burst (post-open)
+//   5   omer_snooze        — reserved for snooze taps
+//  ─────
+//  51   total (well under 64)
+//
+// The key design principle:
+//   omer_future reminders are pre-scheduled DATE triggers for nights 1–5 ahead.
+//   They fire from the OS even if the app is NEVER opened on those nights.
+//   That is what actually reminds the user before they open the app.
+//   omer_burst is just a convenience for tonight — it clears on count and
+//   is not the primary reminder mechanism.
+
+const BURST_LIMIT = 20;
+const FUTURE_NIGHTS = 5;
+// These offsets (in minutes past nightfall) fire on each future night
+const FUTURE_OFFSETS_MINUTES = [0, 15, 30, 60, 90];
 
 Notifications.setNotificationHandler({
   handleNotification: async () =>
@@ -21,12 +43,8 @@ Notifications.setNotificationHandler({
 });
 
 const buildChannelId = (level: number): string => {
-  if (level >= 2) {
-    return CHANNEL_EXTREME;
-  }
-  if (level === 1) {
-    return CHANNEL_ESCALATED;
-  }
+  if (level >= 2) return CHANNEL_EXTREME;
+  if (level === 1) return CHANNEL_ESCALATED;
   return CHANNEL_NORMAL;
 };
 
@@ -35,10 +53,10 @@ const triggerFromDate = (
   level: number
 ): Notifications.NotificationTriggerInput =>
   ({
-  type: Notifications.SchedulableTriggerInputTypes.DATE,
-  date,
-  channelId: buildChannelId(level)
-} as Notifications.NotificationTriggerInput);
+    type: Notifications.SchedulableTriggerInputTypes.DATE,
+    date,
+    channelId: buildChannelId(level)
+  } as Notifications.NotificationTriggerInput);
 
 const buildNotificationContent = (
   title: string,
@@ -50,64 +68,125 @@ const buildNotificationContent = (
     body,
     sound: 'default',
     priority: Notifications.AndroidNotificationPriority.MAX,
-    ...(Platform.OS === 'android' ? { sticky: true, autoDismiss: false } : {}),
     data
   } as Notifications.NotificationContentInput);
 
-const minutesUntilWindowEnd = 23 * 60;
-
-export const initializeNotifications = async (): Promise<boolean> => {
-  const perms = await Notifications.getPermissionsAsync();
-  let granted = perms.granted;
-
-  if (!granted) {
-    const ask = await Notifications.requestPermissionsAsync();
-    granted = ask.granted;
-  }
-
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync(CHANNEL_NORMAL, {
-      name: 'OmerLock High Priority',
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 300, 120, 300],
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: false,
-      sound: 'default'
-    });
-
-    await Notifications.setNotificationChannelAsync(CHANNEL_ESCALATED, {
-      name: 'OmerLock Escalated',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 500, 120, 500, 120, 500],
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: false,
-      sound: 'default'
-    });
-
-    await Notifications.setNotificationChannelAsync(CHANNEL_EXTREME, {
-      name: 'OmerLock Persistent Escalation',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 800, 120, 800, 120, 800],
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: true,
-      sound: 'default'
-    });
-  }
-
-  return granted;
-};
-
-export const clearPendingOmerNotifications = async (): Promise<void> => {
-  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-  const omer = scheduled.filter((entry) => {
-    const data = entry.content.data as Record<string, unknown> | undefined;
-    return data?.kind === 'omer_reminder' || data?.kind === 'omer_snooze';
+const createAndroidChannels = async (): Promise<void> => {
+  await Notifications.setNotificationChannelAsync(CHANNEL_NORMAL, {
+    name: 'OmerLock Reminders',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 300, 120, 300],
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
+    sound: 'default',
+    enableLights: true,
+    showBadge: true
   });
 
-  await Promise.all(
-    omer.map((entry) => Notifications.cancelScheduledNotificationAsync(entry.identifier))
+  await Notifications.setNotificationChannelAsync(CHANNEL_ESCALATED, {
+    name: 'OmerLock Escalated',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 500, 120, 500, 120, 500],
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
+    sound: 'default',
+    enableLights: true,
+    showBadge: true
+  });
+
+  await Notifications.setNotificationChannelAsync(CHANNEL_EXTREME, {
+    name: 'OmerLock Persistent',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 800, 120, 800, 120, 800],
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: true,
+    sound: 'default',
+    enableLights: true,
+    showBadge: true
+  });
+};
+
+// ─── Permissions ─────────────────────────────────────────────────────────────
+
+export const initializeNotifications = async (): Promise<boolean> => {
+  if (Platform.OS === 'android') {
+    await createAndroidChannels();
+  }
+
+  const perms = await Notifications.getPermissionsAsync();
+  if (perms.granted) return true;
+  if (!perms.canAskAgain) return false;
+
+  const asked = await Notifications.requestPermissionsAsync({
+    ios: {
+      allowAlert: true,
+      allowBadge: true,
+      allowSound: true,
+      allowCriticalAlerts: false,
+      provideAppNotificationSettings: false,
+      allowProvisional: false
+    }
+  });
+
+  return asked.granted;
+};
+
+export const checkNotificationPermission = async (): Promise<boolean> => {
+  const perms = await Notifications.getPermissionsAsync();
+  return perms.granted;
+};
+
+export const showPermissionDeniedAlert = (): void => {
+  Alert.alert(
+    'Notifications Disabled',
+    'OmerLock cannot remind you to count the Omer because notifications are turned off.\n\nTap "Open Settings", go to Notifications, and enable them for OmerLock.',
+    [
+      { text: 'Later', style: 'cancel' },
+      { text: 'Open Settings', onPress: () => Linking.openSettings() }
+    ]
   );
 };
+
+// ─── Clear functions ──────────────────────────────────────────────────────────
+//
+//  clearBurstNotifications   → clears only tonight's burst + snooze
+//                              Called when user counts. Does NOT touch omer_future
+//                              or omer_daily_safety, so future nights keep firing.
+//
+//  clearAllOmerNotifications → clears absolutely everything.
+//                              Called only when the Omer season ends or cycle resets.
+
+export const clearBurstNotifications = async (): Promise<void> => {
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  const toCancel = scheduled.filter((entry) => {
+    const kind = (entry.content.data as Record<string, unknown>)?.kind;
+    return kind === 'omer_burst' || kind === 'omer_snooze';
+  });
+  await Promise.all(
+    toCancel.map((e) => Notifications.cancelScheduledNotificationAsync(e.identifier))
+  );
+};
+
+export const clearAllOmerNotifications = async (): Promise<void> => {
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  const toCancel = scheduled.filter((entry) => {
+    const kind = (entry.content.data as Record<string, unknown>)?.kind;
+    return (
+      kind === 'omer_burst' ||
+      kind === 'omer_snooze' ||
+      kind === 'omer_future' ||
+      kind === 'omer_daily_safety'
+    );
+  });
+  await Promise.all(
+    toCancel.map((e) => Notifications.cancelScheduledNotificationAsync(e.identifier))
+  );
+};
+
+// Legacy alias used elsewhere
+export const clearPendingOmerNotifications = clearAllOmerNotifications;
+
+// ─── Scheduling ───────────────────────────────────────────────────────────────
 
 interface ReminderArgs {
   day: number;
@@ -116,23 +195,23 @@ interface ReminderArgs {
   settings: SettingsState;
 }
 
-const buildReminderTimeline = (
+const buildBurstTimeline = (
   tzeit: Date,
   baseFrequency: number,
-  escalationEnabled: boolean
+  escalationEnabled: boolean,
+  hardcoreMode: boolean
 ): Array<{ date: Date; level: number }> => {
   const points: Array<{ date: Date; level: number }> = [];
   let cursor = new Date(tzeit);
-  const end = new Date(tzeit.getTime() + minutesUntilWindowEnd * 60_000);
 
-  while (cursor <= end) {
+  while (points.length < BURST_LIMIT) {
     const elapsed = minutesBetween(tzeit, cursor);
     const level = escalationEnabled ? (elapsed >= 90 ? 2 : elapsed >= 30 ? 1 : 0) : 0;
-
     points.push({ date: new Date(cursor), level });
 
-    const gap =
-      level === 0
+    const gap = hardcoreMode
+      ? 5
+      : level === 0
         ? baseFrequency
         : level === 1
           ? Math.max(5, baseFrequency - 3)
@@ -150,23 +229,101 @@ export const scheduleNightReminders = async ({
   includeBracha,
   settings
 }: ReminderArgs): Promise<void> => {
-  await clearPendingOmerNotifications();
+  const granted = await checkNotificationPermission();
+  if (!granted) return;
 
-  const body = getNotificationBody(day, settings.nusach, includeBracha);
-  const timeline = buildReminderTimeline(
-    tzeit,
-    settings.reminderBaseMinutes,
-    settings.escalationEnabled
-  );
+  // Clear everything and rebuild. This also evicts stale future-night
+  // reminders that were for nights already passed.
+  await clearAllOmerNotifications();
 
   const now = Date.now();
-  const futureTimeline = timeline.filter((step) => step.date.getTime() >= now);
+
+  // ── 1. DAILY safety-net ───────────────────────────────────────────────
+  // Repeating OS-level trigger at nightfall every day. Immune to counting.
+  // This is the last-resort single reminder if the app is never opened.
+  await Notifications.scheduleNotificationAsync({
+    content: buildNotificationContent(
+      '🕯️ Count the Omer Tonight',
+      "Nightfall has begun. Open the app to count Sefiras HaOmer.",
+      { kind: 'omer_daily_safety' }
+    ),
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DAILY,
+      hour: tzeit.getHours(),
+      minute: tzeit.getMinutes(),
+      channelId: CHANNEL_NORMAL
+    } as Notifications.NotificationTriggerInput
+  });
+
+  // ── 2. Pre-scheduled multi-reminders for the next FUTURE_NIGHTS nights ──
+  //
+  // These are DATE triggers for nights 1–5 ahead.
+  // They are scheduled NOW and will fire from the OS on those future nights
+  // WITHOUT the app needing to be opened.
+  //
+  // This is the primary mechanism that reminds users on nights they haven't
+  // opened the app yet — e.g. if they count tonight and then forget tomorrow.
+  //
+  // Each future night gets FUTURE_OFFSETS_MINUTES reminders spread across
+  // the evening (at nightfall, +15, +30, +60, +90 min).
+  for (let n = 1; n <= FUTURE_NIGHTS; n++) {
+    const futureDay = day + n;
+    if (futureDay > 49) break;
+
+    const futureBase = addDays(tzeit, n); // same clock time as tonight's tzeit
+
+    for (const offsetMin of FUTURE_OFFSETS_MINUTES) {
+      const fireAt = new Date(futureBase.getTime() + offsetMin * 60_000);
+      if (fireAt.getTime() <= now) continue;
+
+      const level = offsetMin >= 90 ? 2 : offsetMin >= 30 ? 1 : 0;
+      const futureBody = getNotificationBody(
+        futureDay,
+        settings.nusach,
+        false, // bracha eligibility can't be known ahead of time
+        settings.omerPreposition
+      );
+
+      const title =
+        offsetMin === 0
+          ? `🕯️ Count the Omer — Night ${futureDay}`
+          : `🕯️ Still waiting on night ${futureDay}`;
+
+      await Notifications.scheduleNotificationAsync({
+        content: buildNotificationContent(title, futureBody, {
+          kind: 'omer_future',
+          day: futureDay,
+          offsetMin
+        }),
+        trigger: triggerFromDate(fireAt, level)
+      });
+    }
+  }
+
+  // ── 3. Tonight's burst ────────────────────────────────────────────────
+  // Intensive reminders for tonight only. These fire after the app is opened
+  // (since that's when this function runs), which means they land on top of
+  // whatever future reminders existed. They clear on count.
+  const body = getNotificationBody(
+    day,
+    settings.nusach,
+    includeBracha,
+    settings.omerPreposition
+  );
+  const burstTimeline = buildBurstTimeline(
+    tzeit,
+    settings.reminderBaseMinutes,
+    settings.escalationEnabled,
+    settings.hardcoreMode
+  );
+
+  const futureSlots = burstTimeline.filter((step) => step.date.getTime() > now);
 
   await Promise.all(
-    futureTimeline.map((step) =>
+    futureSlots.map((step) =>
       Notifications.scheduleNotificationAsync({
-        content: buildNotificationContent("Tonight's Omer Count", body, {
-          kind: 'omer_reminder',
+        content: buildNotificationContent('🕯️ Count the Omer', body, {
+          kind: 'omer_burst',
           day,
           escalationLevel: step.level
         }),
@@ -182,11 +339,19 @@ export const scheduleSnoozeReminder = async (
   settings: SettingsState,
   includeBracha: boolean
 ): Promise<void> => {
-  const body = getNotificationBody(day, settings.nusach, includeBracha);
+  const granted = await checkNotificationPermission();
+  if (!granted) return;
+
+  const body = getNotificationBody(
+    day,
+    settings.nusach,
+    includeBracha,
+    settings.omerPreposition
+  );
   const target = new Date(Date.now() + minutes * 60_000);
 
   await Notifications.scheduleNotificationAsync({
-    content: buildNotificationContent('Snooze ended: Count Sefiras HaOmer', body, {
+    content: buildNotificationContent('⏰ Snooze ended — Count the Omer', body, {
       kind: 'omer_snooze',
       day
     }),

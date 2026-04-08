@@ -1,7 +1,7 @@
 import { OmerRuntime, SettingsState, TzeitSource } from '../types';
 import { addDays, toDateKey } from '../utils/date';
 import { getCurrentCoords } from './locationService';
-import { getNextCivilDate, resolveTzeit } from './hebcalService';
+import { getNextCivilDate, resolveZmanim } from './hebcalService';
 
 interface HebrewDateParts {
   year: number;
@@ -85,8 +85,10 @@ export const computeRuntime = async (
   const now = new Date();
   const coords = (await getCurrentCoords(knownCoords)) ?? undefined;
 
-  const todayTzeitResult = await resolveTzeit(now, settings.fallbackTzeit, coords);
-  const nowAfterTzeit = now >= todayTzeitResult.time;
+  const todayZmanim = await resolveZmanim(now, settings.fallbackTzeit, coords);
+  const nowAfterTzeit = now >= todayZmanim.tzeit;
+  const nowBeforeMorningSwitch = now < todayZmanim.sunrise;
+  const countWindow = nowAfterTzeit || nowBeforeMorningSwitch ? 'tonight' : 'last_night';
 
   const activeDate = getNextCivilDate(now, nowAfterTzeit);
   const activeDay = getOmerDayFromDate(activeDate);
@@ -94,20 +96,21 @@ export const computeRuntime = async (
   const cycleKey = getCycleKey(activeDate);
 
   const nextTzeitDate = nowAfterTzeit ? addDays(now, 1) : now;
-  const nextTzeitResult =
+  const nextZmanim =
     nowAfterTzeit && inSefira
-      ? await resolveTzeit(nextTzeitDate, settings.fallbackTzeit, coords)
-      : todayTzeitResult;
+      ? await resolveZmanim(nextTzeitDate, settings.fallbackTzeit, coords)
+      : todayZmanim;
 
   const runtime: OmerRuntime = {
     inSefira,
     activeDay,
     cycleKey,
     activeDateKey: toDateKey(activeDate),
-    tzeitToday: todayTzeitResult.time,
-    nextTzeit: nextTzeitResult.time,
+    tzeitToday: todayZmanim.tzeit,
+    nextTzeit: nextZmanim.tzeit,
     nowAfterTzeit,
-    tzeitSource: (todayTzeitResult.source as TzeitSource) || 'fallback'
+    countWindow,
+    tzeitSource: (todayZmanim.tzeitSource as TzeitSource) || 'fallback'
   };
 
   return {

@@ -10,7 +10,7 @@ import {
 
 import { NUSACH_OPTIONS } from '../constants/nusach';
 import { colors, radius, spacing } from '../constants/theme';
-import { SettingsState } from '../types';
+import { OmerPreposition, SettingsState } from '../types';
 
 interface Props {
   settings: SettingsState;
@@ -67,7 +67,10 @@ export const SettingsScreen = ({
         </View>
 
         <View style={styles.row}>
-          <Text style={styles.rowLabel}>Hardcore mode</Text>
+          <View style={styles.rowLabelGroup}>
+            <Text style={styles.rowLabel}>Hardcore mode</Text>
+            <Text style={styles.rowSubLabel}>Reminders every 5 min until you count</Text>
+          </View>
           <Switch
             value={settings.hardcoreMode}
             onValueChange={(value) =>
@@ -107,6 +110,36 @@ export const SettingsScreen = ({
                 style={[
                   styles.pillLabel,
                   settings.nusach === option.key && styles.pillLabelSelected
+                ]}
+              >
+                {option.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Omer count text</Text>
+        <Text style={styles.secondaryLabel}>Preposition for the count</Text>
+        <View style={styles.pillRow}>
+          {([
+            { key: 'baomer' as OmerPreposition, label: 'בעומר' },
+            { key: 'laomer' as OmerPreposition, label: 'לעומר' }
+          ]).map((option) => (
+            <TouchableOpacity
+              key={option.key}
+              style={[
+                styles.pill,
+                settings.omerPreposition === option.key && styles.pillSelected
+              ]}
+              onPress={() => guarded(() => onUpdateSettings({ omerPreposition: option.key }))}
+            >
+              <Text
+                style={[
+                  styles.pillLabel,
+                  styles.hebrewPillLabel,
+                  settings.omerPreposition === option.key && styles.pillLabelSelected
                 ]}
               >
                 {option.label}
@@ -196,19 +229,19 @@ export const SettingsScreen = ({
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Halachic Overrides</Text>
+        <Text style={styles.sectionTitle}>Halachic Status</Text>
         <TouchableOpacity
           style={styles.outlineAction}
           onPress={() => guarded(() => onMarkMissedEarlier())}
         >
-          <Text style={styles.outlineActionText}>I missed an earlier day</Text>
+          <Text style={styles.outlineActionText}>I missed a day</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.outlineAction}
           onPress={() => guarded(() => onClearMissedEarlier())}
         >
           <Text style={styles.outlineActionText}>
-            Clear missed-day override ({missedOverride ? 'On' : 'Off'})
+            I did not miss a day ({missedOverride ? 'Off for bracha' : 'Bracha on'})
           </Text>
         </TouchableOpacity>
       </View>
@@ -249,9 +282,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between'
   },
+  rowLabelGroup: {
+    flex: 1,
+    marginRight: 12
+  },
   rowLabel: {
     color: colors.textSecondary,
     fontFamily: 'SpaceGrotesk_400Regular'
+  },
+  rowSubLabel: {
+    color: colors.textSecondary,
+    fontFamily: 'SpaceGrotesk_400Regular',
+    fontSize: 12,
+    opacity: 0.7,
+    marginTop: 2
   },
   pillRow: {
     flexDirection: 'row',
@@ -273,6 +317,10 @@ const styles = StyleSheet.create({
   pillLabel: {
     color: colors.textSecondary,
     fontFamily: 'SpaceGrotesk_700Bold'
+  },
+  hebrewPillLabel: {
+    fontFamily: 'FrankRuhlLibre_600SemiBold',
+    fontSize: 18
   },
   pillLabelSelected: {
     color: colors.textPrimary

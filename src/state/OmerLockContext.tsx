@@ -11,14 +11,19 @@ import React, {
 
 import { makeDefaultState } from '../constants/defaults';
 import {
+  checkNotificationPermission,
+  clearAllOmerNotifications,
+  clearBurstNotifications,
   clearPendingOmerNotifications,
   initializeNotifications,
   scheduleNightReminders,
-  scheduleSnoozeReminder
+  scheduleSnoozeReminder,
+  showPermissionDeniedAlert
 } from '../services/notificationService';
 import { computeRuntime, getCycleKey } from '../services/omerEngine';
 import { loadState, saveState } from '../services/storageService';
 import { syncPendingEvents, syncSnapshot } from '../services/syncService';
+import { markPushTokenCounted, syncPushToken } from '../services/pushTokenService';
 import {
   CompletionMethod,
   OmerCycleState,
@@ -36,6 +41,7 @@ const emptyRuntime: OmerRuntime = {
   tzeitToday: null,
   nextTzeit: null,
   nowAfterTzeit: false,
+  countWindow: 'last_night',
   tzeitSource: 'fallback'
 };
 
@@ -71,7 +77,13 @@ const calculateStreak = (completions: OmerCycleState['completions']): number => 
 
   let streak = 1;
   for (let idx = sorted.length - 1; idx > 0; idx -= 1) {
-    if (sorted[idx] - sorted[idx - 1] === 1) {
+    const current = sorted[idx];
+    const previous = sorted[idx - 1];
+    if (current === undefined || previous === undefined) {
+      break;
+    }
+
+    if (current - previous === 1) {
       streak += 1;
       continue;
     }
@@ -81,32 +93,14 @@ const calculateStreak = (completions: OmerCycleState['completions']): number => 
   return streak;
 };
 
-const deriveMissedDays = (
-  completions: OmerCycleState['completions'],
-  activeDay: number | null
-): number[] => {
-  if (!activeDay || activeDay <= 1) {
-    return [];
-  }
-
-  const missed: number[] = [];
-  for (let day = 1; day < activeDay; day += 1) {
-    if (!completions[String(day)]) {
-      missed.push(day);
-    }
-  }
-
-  return missed;
-};
-
 const applyHalachicDerivations = (
   state: OmerCycleState,
-  runtime: OmerRuntime
+  _runtime: OmerRuntime
 ): OmerCycleState => {
-  const missedDays = runtime.inSefira
-    ? deriveMissedDays(state.completions, runtime.activeDay)
-    : state.missedDays;
-  const missedFullDay = state.overrideMissedEarlier || missedDays.length > 0;
+  // Halachic status is user-driven only:
+  // assume prior days were counted unless user explicitly marks a missed day.
+  const missedDays: number[] = [];
+  const missedFullDay = state.overrideMissedEarlier;
   const streak = calculateStreak(state.completions);
 
   return {
@@ -246,7 +240,11 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
       try {
         const bootstrapCycle = getCycleKey(new Date());
         const persisted = await loadState(bootstrapCycle);
-        await initializeNotifications();
+        const notifGranted = await initializeNotifications();
+        if (!notifGranted) {
+          // Delay slightly so the main screen is visible before the alert appears
+          setTimeout(showPermissionDeniedAlert, 1200);
+        }
 
         if (cancelled) {
           return;
@@ -342,12 +340,15 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
 
   useEffect(() => {
     if (!runtime.inSefira || runtime.activeDay === null || !runtime.tzeitToday) {
-      clearPendingOmerNotifications().catch(() => undefined);
+      // Season over — kill everything including the daily safety trigger
+      clearAllOmerNotifications().catch(() => undefined);
       return;
     }
 
     if (isTodayCompleted) {
-      clearPendingOmerNotifications().catch(() => undefined);
+      // Tonight is done — clear the burst but KEEP the daily safety so
+      // it fires again tomorrow night without needing the app to be opened
+      clearBurstNotifications().catch(() => undefined);
       return;
     }
 
@@ -357,6 +358,15 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
       includeBracha: brachaAllowed,
       settings: state.settings
     }).catch(() => undefined);
+
+    // Register/refresh this device in Supabase so the hourly server-side cron
+    // knows to push at nightfall even when the app is closed.
+    syncPushToken(
+      runtime.activeDay,
+      runtime.tzeitToday,
+      runtime.cycleKey,
+      isTodayCompleted
+    ).catch(() => undefined);
   }, [
     runtime.inSefira,
     runtime.activeDay,
@@ -397,15 +407,65 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
       );
 
       await commitState(withEvent);
-      await clearPendingOmerNotifications();
+      // Keep the daily safety trigger alive — it will remind the user tomorrow night.
+      // Only clear tonight's intensive burst.
+      await clearBurstNotifications();
+      // Tell the server immediately so the next hourly cron skips this device.
+      markPushTokenCounted().catch(() => undefined);
     },
     [commitState]
   );
 
   const markAlreadyCounted = useCallback(
-    async () => markDayCompleted('already_counted_override'),
+    async () => markDayCompleted('already_counted'),
     [markDayCompleted]
   );
+
+  const markPastDaysAsDone = useCallback(async () => {
+    const currentRuntime = runtimeRef.current;
+    const currentState = stateRef.current;
+
+    if (!currentRuntime.inSefira || currentRuntime.activeDay === null || currentRuntime.activeDay <= 1) {
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextCompletions = { ...currentState.completions };
+    let addedCount = 0;
+
+    for (let day = 1; day < currentRuntime.activeDay; day += 1) {
+      const key = String(day);
+      if (!nextCompletions[key]) {
+        nextCompletions[key] = {
+          day,
+          method: 'bulk_confirm_past',
+          timestamp: nowIso
+        };
+        addedCount += 1;
+      }
+    }
+
+    if (addedCount === 0) {
+      return;
+    }
+
+    const nextBase: OmerCycleState = {
+      ...currentState,
+      completions: nextCompletions
+    };
+
+    const derived = applyHalachicDerivations(nextBase, currentRuntime);
+    const withEvent = withQueuedEvent(
+      derived,
+      makeSyncEvent('completion', {
+        method: 'bulk_confirm_past',
+        throughDay: currentRuntime.activeDay - 1,
+        addedCount
+      })
+    );
+
+    await commitState(withEvent);
+  }, [commitState]);
 
   const setMissedEarlierOverride = useCallback(async () => {
     const currentRuntime = runtimeRef.current;
@@ -518,6 +578,7 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
     refreshRuntime,
     markDayCompleted,
     markAlreadyCounted,
+    markPastDaysAsDone,
     setMissedEarlierOverride,
     clearMissedEarlierOverride,
     snooze,

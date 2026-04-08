@@ -8,6 +8,7 @@ const fallbackTzeit =
 export const DEFAULT_SETTINGS: SettingsState = {
   showBracha: true,
   nusach: 'ashkenaz',
+  omerPreposition: 'baomer',
   reminderBaseMinutes: 10,
   defaultSnoozeMinutes: 10,
   fallbackTzeit,

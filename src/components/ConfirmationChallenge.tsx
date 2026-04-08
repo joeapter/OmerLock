@@ -13,10 +13,12 @@ import { buildMultipleChoice, pickChallenge } from '../utils/challenge';
 
 interface Props {
   day: number;
+  countWindow: 'tonight' | 'last_night';
   onSuccess: (method: 'swipe_hold' | 'enter_number' | 'multiple_choice') => void;
 }
 
-export const ConfirmationChallenge = ({ day, onSuccess }: Props) => {
+export const ConfirmationChallenge = ({ day, countWindow, onSuccess }: Props) => {
+  const possessiveLabel = countWindow === 'tonight' ? "Tonight's" : "Last night's";
   const [mode, setMode] = useState(() => pickChallenge());
   const [typedDay, setTypedDay] = useState('');
   const [selectedChoice, setSelectedChoice] = useState<number | null>(null);
@@ -71,7 +73,7 @@ export const ConfirmationChallenge = ({ day, onSuccess }: Props) => {
     <View style={styles.container}>
       <Text style={styles.title}>Quick Confirmation</Text>
       <Text style={styles.subtitle}>
-        Complete one quick step to mark tonight as counted.
+        Complete one quick step to mark {possessiveLabel.toLowerCase()} count as done.
       </Text>
 
       {mode === 'swipe_hold' ? (
@@ -91,7 +93,7 @@ export const ConfirmationChallenge = ({ day, onSuccess }: Props) => {
 
       {mode === 'enter_number' ? (
         <View style={styles.challengeCard}>
-          <Text style={styles.challengeTitle}>Enter tonight's day</Text>
+          <Text style={styles.challengeTitle}>Enter the Omer day</Text>
           <Text style={styles.challengeText}>Type: {day}</Text>
           <TextInput
             value={typedDay}
@@ -116,8 +118,8 @@ export const ConfirmationChallenge = ({ day, onSuccess }: Props) => {
 
       {mode === 'multiple_choice' ? (
         <View style={styles.challengeCard}>
-          <Text style={styles.challengeTitle}>Pick tonight's day</Text>
-          <Text style={styles.challengeText}>Select tonight's Omer day:</Text>
+          <Text style={styles.challengeTitle}>Pick the Omer day</Text>
+          <Text style={styles.challengeText}>Select the correct Omer day:</Text>
           <View style={styles.choiceRow}>
             {choices.map((option) => (
               <TouchableOpacity

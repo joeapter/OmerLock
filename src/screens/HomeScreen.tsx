@@ -2,27 +2,38 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { colors, radius, spacing } from '../constants/theme';
-import { OmerRuntime } from '../types';
+import { OmerPreposition, OmerRuntime } from '../types';
 import { formatClock } from '../utils/date';
 import { getEnglishCountText, getHebrewCountText } from '../utils/omerText';
 
 interface Props {
   runtime: OmerRuntime;
+  countWindow: 'tonight' | 'last_night';
   isTodayCompleted: boolean;
   brachaAllowed: boolean;
   streak: number;
   missedFullDay: boolean;
+  canMarkPastDaysAsDone: boolean;
+  omerPreposition: OmerPreposition;
   onOpenModal: () => void;
+  onMarkPastDaysAsDone: () => void;
 }
 
 export const HomeScreen = ({
   runtime,
+  countWindow,
   isTodayCompleted,
   brachaAllowed,
   streak,
   missedFullDay,
-  onOpenModal
+  canMarkPastDaysAsDone,
+  omerPreposition,
+  onOpenModal,
+  onMarkPastDaysAsDone
 }: Props) => {
+  const possessiveLabel = countWindow === 'tonight' ? "Tonight's" : "Last night's";
+  const periodLabel = countWindow === 'tonight' ? 'Tonight' : 'Last night';
+
   if (!runtime.inSefira || runtime.activeDay === null) {
     return (
       <View style={styles.container}>
@@ -37,15 +48,15 @@ export const HomeScreen = ({
   return (
     <View style={styles.container}>
       <View style={[styles.card, styles.heroCard]}>
-        <Text style={styles.kicker}>Tonight's Count</Text>
+        <Text style={styles.kicker}>{possessiveLabel} Count</Text>
         <Text style={styles.dayNumber}>Day {runtime.activeDay}</Text>
-        <Text style={styles.hebrewLine}>{getHebrewCountText(runtime.activeDay)}</Text>
+        <Text style={styles.hebrewLine}>{getHebrewCountText(runtime.activeDay, omerPreposition)}</Text>
         <Text style={styles.englishLine}>{getEnglishCountText(runtime.activeDay)}</Text>
       </View>
 
       <View style={styles.row}>
         <View style={styles.metric}>
-          <Text style={styles.metricLabel}>Tonight</Text>
+          <Text style={styles.metricLabel}>{periodLabel}</Text>
           <Text style={[styles.metricValue, isTodayCompleted && styles.done]}>
             {isTodayCompleted ? 'Counted' : 'Waiting'}
           </Text>
@@ -74,9 +85,17 @@ export const HomeScreen = ({
 
       <TouchableOpacity style={styles.primaryButton} onPress={onOpenModal}>
         <Text style={styles.primaryText}>
-          {isTodayCompleted ? "Review tonight's count" : "Open tonight's count"}
+          {isTodayCompleted
+            ? `Review ${possessiveLabel.toLowerCase()} count`
+            : `Open ${possessiveLabel.toLowerCase()} count`}
         </Text>
       </TouchableOpacity>
+
+      {canMarkPastDaysAsDone ? (
+        <TouchableOpacity style={styles.textButton} onPress={onMarkPastDaysAsDone}>
+          <Text style={styles.textButtonText}>I promise I counted till now 🙂</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 };
@@ -195,5 +214,14 @@ const styles = StyleSheet.create({
     color: '#02110D',
     textAlign: 'center',
     fontFamily: 'SpaceGrotesk_700Bold'
+  },
+  textButton: {
+    alignSelf: 'center',
+    paddingVertical: spacing.xs
+  },
+  textButtonText: {
+    color: colors.textSecondary,
+    fontFamily: 'SpaceGrotesk_700Bold',
+    textDecorationLine: 'underline'
   }
 });

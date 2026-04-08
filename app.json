@@ -2,7 +2,7 @@
   "expo": {
     "name": "OmerLock",
     "slug": "omerlock",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "icon": "./assets/icon-1024.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -17,13 +17,13 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.omerlock.app",
-      "buildNumber": "1",
       "icon": "./assets/icon-1024.png",
       "infoPlist": {
         "UIBackgroundModes": [
           "remote-notification"
         ],
-        "NSLocationWhenInUseUsageDescription": "OmerLock uses your location to calculate nightfall (tzeit hakochavim) for accurate reminders."
+        "NSLocationWhenInUseUsageDescription": "OmerLock uses your location to calculate nightfall (tzeit hakochavim) for accurate reminders.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -55,7 +55,10 @@
       "expo-location"
     ],
     "extra": {
-      "fallbackTzeit": "20:30"
+      "fallbackTzeit": "20:30",
+      "eas": {
+        "projectId": "dfeba93f-4894-4912-8e15-8a8258dbe9b9"
+      }
     }
   }
 }

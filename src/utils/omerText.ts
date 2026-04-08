@@ -1,5 +1,5 @@
 import { NUSACH_LIBRARY } from '../constants/nusach';
-import { NusachKey, OmerNusachText } from '../types';
+import { NusachKey, OmerNusachText, OmerPreposition } from '../types';
 
 const EN_UNDER_20 = [
   '',
@@ -64,38 +64,48 @@ const HE_TENS: Record<number, string> = {
 const plural = (count: number, singular: string, pluralWord: string): string =>
   count === 1 ? singular : pluralWord;
 
+const getEnglishUnder20 = (value: number): string => EN_UNDER_20[value] ?? String(value);
+
+const getEnglishTens = (value: number): string => EN_TENS[value] ?? String(value);
+
+const getHebrewUnder11 = (value: number): string => HE_UNDER_11[value] ?? String(value);
+
+const getHebrewTeen = (value: number): string => HE_TEENS[value] ?? String(value);
+
+const getHebrewTens = (value: number): string => HE_TENS[value] ?? String(value);
+
 const toEnglishNumber = (value: number): string => {
   if (value < 20) {
-    return EN_UNDER_20[value];
+    return getEnglishUnder20(value);
   }
 
   const tens = Math.floor(value / 10) * 10;
   const unit = value % 10;
 
   if (unit === 0) {
-    return EN_TENS[tens];
+    return getEnglishTens(tens);
   }
 
-  return `${EN_TENS[tens]}-${EN_UNDER_20[unit]}`;
+  return `${getEnglishTens(tens)}-${getEnglishUnder20(unit)}`;
 };
 
 const toHebrewNumber = (value: number): string => {
   if (value <= 10) {
-    return HE_UNDER_11[value];
+    return getHebrewUnder11(value);
   }
 
   if (value < 20) {
-    return HE_TEENS[value];
+    return getHebrewTeen(value);
   }
 
   const tens = Math.floor(value / 10) * 10;
   const unit = value % 10;
 
   if (unit === 0) {
-    return HE_TENS[tens];
+    return getHebrewTens(tens);
   }
 
-  return `${HE_TENS[tens]} ו${HE_UNDER_11[unit]}`;
+  return `${getHebrewTens(tens)} ו${getHebrewUnder11(unit)}`;
 };
 
 const hebrewDayCount = (day: number): string => {
@@ -165,32 +175,34 @@ export const getEnglishCountText = (day: number): string => {
   return `${base} That is ${weekPart}${dayPart}.`;
 };
 
-export const getHebrewCountText = (day: number): string => {
+export const getHebrewCountText = (day: number, omerPreposition: OmerPreposition = 'baomer'): string => {
   const weeks = Math.floor(day / 7);
   const days = day % 7;
+  const prepositionText = omerPreposition === 'baomer' ? 'בעומר' : 'לעומר';
 
   const base = `היום ${hebrewDayCount(day)}`;
 
   if (weeks === 0) {
-    return `${base} לעומר.`;
+    return `${base} ${prepositionText}.`;
   }
 
   const weekPart = hebrewWeekCount(weeks);
   const dayPart = hebrewRemainderCount(days);
 
-  return `${base} שהם ${weekPart}${dayPart ? ` ${dayPart}` : ''} לעומר.`;
+  return `${base} שהם ${weekPart}${dayPart ? ` ${dayPart}` : ''} ${prepositionText}.`;
 };
 
 export const getNusachText = (
   day: number,
   nusach: NusachKey,
-  includeBracha: boolean
+  includeBracha: boolean,
+  omerPreposition: OmerPreposition = 'baomer'
 ): OmerNusachText => {
   const selected = NUSACH_LIBRARY[nusach];
 
   return {
     bracha: includeBracha ? selected.bracha : 'ללא ברכה: ממשיכים לספור.',
-    countHebrew: getHebrewCountText(day),
+    countHebrew: getHebrewCountText(day, omerPreposition),
     countEnglish: getEnglishCountText(day),
     harachaman: selected.harachaman
   };
@@ -199,8 +211,9 @@ export const getNusachText = (
 export const getNotificationBody = (
   day: number,
   nusach: NusachKey,
-  includeBracha: boolean
+  includeBracha: boolean,
+  omerPreposition: OmerPreposition = 'baomer'
 ): string => {
-  const text = getNusachText(day, nusach, includeBracha);
+  const text = getNusachText(day, nusach, includeBracha, omerPreposition);
   return [text.bracha, text.countHebrew, text.countEnglish, text.harachaman].join('\n');
 };

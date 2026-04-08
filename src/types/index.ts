@@ -4,18 +4,24 @@ export type CompletionMethod =
   | 'swipe_hold'
   | 'enter_number'
   | 'multiple_choice'
-  | 'already_counted_override';
+  | 'already_counted'
+  | 'already_counted_override'
+  | 'bulk_confirm_past';
 
 export type TzeitSource = 'hebcal' | 'fallback';
+export type CountWindow = 'tonight' | 'last_night';
 
 export interface LatLng {
   latitude: number;
   longitude: number;
 }
 
+export type OmerPreposition = 'laomer' | 'baomer';
+
 export interface SettingsState {
   showBracha: boolean;
   nusach: NusachKey;
+  omerPreposition: OmerPreposition;
   reminderBaseMinutes: number;
   defaultSnoozeMinutes: 10 | 20 | 30;
   fallbackTzeit: string;
@@ -60,6 +66,7 @@ export interface OmerRuntime {
   tzeitToday: Date | null;
   nextTzeit: Date | null;
   nowAfterTzeit: boolean;
+  countWindow: CountWindow;
   tzeitSource: TzeitSource;
 }
 
@@ -77,6 +84,7 @@ export interface OmerLockContextValue {
   refreshRuntime: () => Promise<void>;
   markDayCompleted: (method: CompletionMethod) => Promise<void>;
   markAlreadyCounted: () => Promise<void>;
+  markPastDaysAsDone: () => Promise<void>;
   setMissedEarlierOverride: () => Promise<void>;
   clearMissedEarlierOverride: () => Promise<void>;
   snooze: (minutes: 10 | 20 | 30) => Promise<void>;

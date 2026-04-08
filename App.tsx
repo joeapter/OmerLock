@@ -21,7 +21,11 @@ import { ForcedOmerModal } from './src/components/ForcedOmerModal';
 import { OmerBanner } from './src/components/OmerBanner';
 import { OpeningScreen } from './src/components/OpeningScreen';
 import { colors, radius, spacing } from './src/constants/theme';
-import { addNotificationListeners } from './src/services/notificationService';
+import {
+  addNotificationListeners,
+  checkNotificationPermission,
+  showPermissionDeniedAlert
+} from './src/services/notificationService';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { HistoryScreen } from './src/screens/HistoryScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -59,6 +63,7 @@ const AppShell = () => {
     refreshRuntime,
     markDayCompleted,
     markAlreadyCounted,
+    markPastDaysAsDone,
     setMissedEarlierOverride,
     clearMissedEarlierOverride,
     snooze,
@@ -71,6 +76,7 @@ const AppShell = () => {
 
   const [screen, setScreen] = useState<ScreenKey>('home');
   const [notificationForcedModal, setNotificationForcedModal] = useState(false);
+  const [manualReviewModal, setManualReviewModal] = useState(false);
 
   useEffect(() => {
     const listener = addNotificationListeners(() => {
@@ -85,6 +91,13 @@ const AppShell = () => {
     const subscription = AppState.addEventListener('change', (status) => {
       if (status === 'active') {
         refreshRuntime().catch(() => undefined);
+        // Re-check notification permission every time app comes to foreground.
+        // If the user previously denied it, nudge them to fix it in Settings.
+        checkNotificationPermission().then((granted) => {
+          if (!granted) {
+            showPermissionDeniedAlert();
+          }
+        });
       }
     });
 
@@ -97,20 +110,37 @@ const AppShell = () => {
     }
   }, [isTodayCompleted]);
 
+  useEffect(() => {
+    if (!isTodayCompleted) {
+      setManualReviewModal(false);
+    }
+  }, [isTodayCompleted]);
+
   const lockModalVisible =
     runtime.inSefira &&
     runtime.activeDay !== null &&
     !isTodayCompleted &&
     (shouldShowLockModal || notificationForcedModal);
+  const reviewModalVisible =
+    runtime.inSefira && runtime.activeDay !== null && isTodayCompleted && manualReviewModal;
+
+  const handleOpenCountModal = () => {
+    if (isTodayCompleted) {
+      setManualReviewModal(true);
+      return;
+    }
+    setNotificationForcedModal(true);
+  };
 
   const hardcoreNavigationLock =
     state.settings.hardcoreMode &&
     runtime.inSefira &&
     runtime.activeDay !== null &&
     !isTodayCompleted;
+  const possessiveLabel = runtime.countWindow === 'tonight' ? "tonight's" : "last night's";
   const showHardcoreBanner = state.settings.hardcoreMode;
   const hardcoreBannerText = hardcoreNavigationLock
-    ? "Hardcore mode is on. Complete tonight's count to unlock the app."
+    ? `Hardcore mode is on. Complete ${possessiveLabel} count to unlock the app.`
     : 'Hardcore mode is active. The app locks each night until you count.';
 
   const pageSubtitle = useMemo(() => {
@@ -120,8 +150,27 @@ const AppShell = () => {
     if (screen === 'settings') {
       return 'Reminder and nusach settings';
     }
-    return "Tonight's count at a glance";
-  }, [screen]);
+    if (!runtime.inSefira) {
+      return 'Daily Omer status';
+    }
+    return runtime.countWindow === 'tonight'
+      ? "Tonight's count at a glance"
+      : "Last night's count at a glance";
+  }, [runtime.countWindow, runtime.inSefira, screen]);
+
+  const canMarkPastDaysAsDone = useMemo(() => {
+    if (!runtime.inSefira || runtime.activeDay === null || runtime.activeDay <= 1) {
+      return false;
+    }
+
+    for (let day = 1; day < runtime.activeDay; day += 1) {
+      if (!state.completions[String(day)]) {
+        return true;
+      }
+    }
+
+    return false;
+  }, [runtime.activeDay, runtime.inSefira, state.completions]);
 
   if (loading) {
     return <OpeningScreen />;
@@ -158,11 +207,15 @@ const AppShell = () => {
         {screen === 'home' ? (
           <HomeScreen
             runtime={runtime}
+            countWindow={runtime.countWindow}
             isTodayCompleted={isTodayCompleted}
             brachaAllowed={brachaAllowed}
             streak={state.streak}
             missedFullDay={state.missedFullDay}
-            onOpenModal={() => setNotificationForcedModal(true)}
+            canMarkPastDaysAsDone={canMarkPastDaysAsDone}
+            omerPreposition={state.settings.omerPreposition}
+            onOpenModal={handleOpenCountModal}
+            onMarkPastDaysAsDone={markPastDaysAsDone}
           />
         ) : null}
 
@@ -170,6 +223,7 @@ const AppShell = () => {
           <HistoryScreen
             completions={state.completions}
             activeDay={runtime.activeDay}
+            countWindow={runtime.countWindow}
             missedDays={state.missedDays}
           />
         ) : null}
@@ -224,7 +278,9 @@ const AppShell = () => {
         <ForcedOmerModal
           visible={lockModalVisible}
           day={runtime.activeDay}
+          countWindow={runtime.countWindow}
           nusach={state.settings.nusach}
+          omerPreposition={state.settings.omerPreposition}
           brachaAllowed={brachaAllowed}
           hardcoreMode={state.settings.hardcoreMode}
           defaultSnooze={state.settings.defaultSnoozeMinutes}
@@ -233,6 +289,26 @@ const AppShell = () => {
           onAlreadyCounted={markAlreadyCounted}
           onMissedEarlier={setMissedEarlierOverride}
           onDismissAfterAction={() => setNotificationForcedModal(false)}
+        />
+      ) : null}
+
+      {runtime.inSefira && runtime.activeDay !== null ? (
+        <ForcedOmerModal
+          visible={reviewModalVisible}
+          reviewOnly
+          onReviewClose={() => setManualReviewModal(false)}
+          day={runtime.activeDay}
+          countWindow={runtime.countWindow}
+          nusach={state.settings.nusach}
+          omerPreposition={state.settings.omerPreposition}
+          brachaAllowed={brachaAllowed}
+          hardcoreMode={state.settings.hardcoreMode}
+          defaultSnooze={state.settings.defaultSnoozeMinutes}
+          onCountComplete={markDayCompleted}
+          onSnooze={snooze}
+          onAlreadyCounted={markAlreadyCounted}
+          onMissedEarlier={setMissedEarlierOverride}
+          onDismissAfterAction={() => setManualReviewModal(false)}
         />
       ) : null}
     </SafeAreaView>
