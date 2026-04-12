@@ -183,13 +183,26 @@ const AppShell = () => {
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <Text style={styles.appTitle}>OmerLock</Text>
-          <Text style={styles.dateText}>
-            {new Date().toLocaleDateString(undefined, {
-              weekday: 'short',
-              month: 'short',
-              day: 'numeric'
-            })}
-          </Text>
+          <View style={styles.headerRight}>
+            <Text style={styles.dateText}>
+              {new Date().toLocaleDateString(undefined, {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric'
+              })}
+            </Text>
+            <View style={[
+              styles.locationBadge,
+              runtime.tzeitSource === 'hebcal' ? styles.locationBadgeActive : styles.locationBadgeFallback
+            ]}>
+              <Text style={[
+                styles.locationBadgeText,
+                runtime.tzeitSource === 'hebcal' ? styles.locationBadgeTextActive : styles.locationBadgeTextFallback
+              ]}>
+                {runtime.tzeitSource === 'hebcal' ? '📍 Location' : '🕐 Fallback time'}
+              </Text>
+            </View>
+          </View>
         </View>
         <Text style={styles.pageSubtitle}>{pageSubtitle}</Text>
       </View>
@@ -358,7 +371,11 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'flex-start'
+  },
+  headerRight: {
+    alignItems: 'flex-end',
+    gap: 4
   },
   appTitle: {
     color: colors.textPrimary,
@@ -369,6 +386,30 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontFamily: 'SpaceGrotesk_400Regular',
     fontSize: 13
+  },
+  locationBadge: {
+    borderRadius: 99,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderWidth: 1
+  },
+  locationBadgeActive: {
+    backgroundColor: '#0D2E1F',
+    borderColor: '#1F6E43'
+  },
+  locationBadgeFallback: {
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.border
+  },
+  locationBadgeText: {
+    fontFamily: 'SpaceGrotesk_700Bold',
+    fontSize: 10
+  },
+  locationBadgeTextActive: {
+    color: '#4ADE80'
+  },
+  locationBadgeTextFallback: {
+    color: colors.textSecondary
   },
   pageSubtitle: {
     color: colors.textSecondary,

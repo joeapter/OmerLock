@@ -21,6 +21,7 @@ import {
   showPermissionDeniedAlert
 } from '../services/notificationService';
 import { computeRuntime, getCycleKey } from '../services/omerEngine';
+import { prewarmLocationCache } from '../services/locationService';
 import { loadState, saveState } from '../services/storageService';
 import { syncPendingEvents, syncSnapshot } from '../services/syncService';
 import { markPushTokenCounted, syncPushToken } from '../services/pushTokenService';
@@ -240,6 +241,12 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
       try {
         const bootstrapCycle = getCycleKey(new Date());
         const persisted = await loadState(bootstrapCycle);
+
+        // Pre-warm the in-memory location cache from persisted coords so the
+        // GPS doesn't fire immediately on every app open.
+        if (persisted.lastKnownCoords) {
+          prewarmLocationCache(persisted.lastKnownCoords);
+        }
         const notifGranted = await initializeNotifications();
         if (!notifGranted) {
           // Delay slightly so the main screen is visible before the alert appears
