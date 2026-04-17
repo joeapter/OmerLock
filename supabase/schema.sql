@@ -65,6 +65,55 @@ to anon
 using (true)
 with check (true);
 
+-- ─── Push schedule ───────────────────────────────────────────────────────────
+-- One row per device per omer night (up to 5 nights pre-loaded from the app).
+-- The device writes the EXACT tzeit_utc for each night, computed from its own
+-- location. The server queries: tzeit_utc <= now() AND counted = false.
+-- This guarantees server-side pushes for all 5 upcoming nights even if the
+-- app is never opened again.
+create table if not exists public.push_schedule (
+  token       text        not null,
+  day         integer     not null,             -- omer night (1–49)
+  tzeit_utc   timestamptz not null,             -- exact nightfall for THIS night, UTC
+  counted     boolean     not null default false,
+  cycle_key   text        not null,
+  updated_at  timestamptz not null default now(),
+  primary key (token, day)
+);
+
+alter table public.push_schedule enable row level security;
+
+drop policy if exists "devices can upsert own schedule" on public.push_schedule;
+create policy "devices can upsert own schedule"
+on public.push_schedule
+for all
+to anon
+using (true)
+with check (true);
+
+-- ─── App config ──────────────────────────────────────────────────────────────
+-- Simple key/value store for remote config.
+-- To prompt users to update, set min_version to the new version string in the
+-- Supabase dashboard — no new build or code change required.
+create table if not exists public.app_config (
+  key   text primary key,
+  value text not null
+);
+
+alter table public.app_config enable row level security;
+
+drop policy if exists "public read app_config" on public.app_config;
+create policy "public read app_config"
+on public.app_config
+for select
+to anon
+using (true);
+
+-- Seed the initial value. Update this in the dashboard to trigger update prompts.
+insert into public.app_config (key, value)
+values ('min_version', '1.0.0')
+on conflict (key) do nothing;
+
 -- ─── Cron job ────────────────────────────────────────────────────────────────
 -- Fires every hour at :00. Calls the Edge Function which does the actual work.
 -- Replace the URL if your project ref changes.

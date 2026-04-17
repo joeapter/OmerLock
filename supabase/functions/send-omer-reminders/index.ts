@@ -2,19 +2,19 @@
 // Runs every hour at :00 via pg_cron (see schema.sql).
 //
 // Logic:
-//   1. Query push_tokens where tzeit_utc <= now() AND counted = false
-//      AND tzeit_utc > now() - 23h  (ignore yesterday's uncounted rows)
-//   2. Send a push notification to each eligible device via Expo's push API.
+//   Query push_schedule where tzeit_utc <= now() AND counted = false
+//   AND tzeit_utc > now() - 23h  (ignore stale rows from >1 night ago)
+//   Send a push to each matching device/night combo.
 //
-// Time handling:
-//   tzeit_utc is written by the device, computed from the user's own location.
-//   The server never needs to know about timezones — it just checks UTC timestamps.
+// Each row in push_schedule represents ONE device on ONE omer night, with
+// the exact tzeit_utc for that night computed on the device from the user's
+// own location. The server does pure UTC math — no timezone conversion.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-interface PushToken {
+interface ScheduleRow {
   token: string;
-  active_day: number;
+  day: number;
 }
 
 interface ExpoMessage {
@@ -27,25 +27,24 @@ interface ExpoMessage {
 }
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
-const EXPO_BATCH_SIZE = 100; // Expo hard limit per request
+const EXPO_BATCH_SIZE = 100;
 
 Deno.serve(async () => {
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
-    // Service role key — auto-injected by Supabase, bypasses RLS
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   );
 
   const now = new Date();
   const windowStart = new Date(now.getTime() - 23 * 60 * 60 * 1000);
 
-  // Fetch all devices that:
-  //   • are past their nightfall (tzeit_utc <= now)
-  //   • haven't counted yet tonight
-  //   • are within the current night's window (not yesterday's stale row)
-  const { data: tokens, error } = await supabase
-    .from('push_tokens')
-    .select('token, active_day')
+  // Find every device/night where:
+  //   • that night's tzeit has passed (tzeit_utc <= now)
+  //   • the user hasn't counted yet for that night
+  //   • the row is from within the last 23h (not a stale old night)
+  const { data: rows, error } = await supabase
+    .from('push_schedule')
+    .select('token, day')
     .lte('tzeit_utc', now.toISOString())
     .gte('tzeit_utc', windowStart.toISOString())
     .eq('counted', false);
@@ -55,20 +54,19 @@ Deno.serve(async () => {
     return new Response(`Error: ${error.message}`, { status: 500 });
   }
 
-  if (!tokens || tokens.length === 0) {
+  if (!rows || rows.length === 0) {
     return new Response('No reminders needed this hour.', { status: 200 });
   }
 
-  const messages: ExpoMessage[] = (tokens as PushToken[]).map((row) => ({
+  const messages: ExpoMessage[] = (rows as ScheduleRow[]).map((row) => ({
     to: row.token,
     title: '🕯️ Count the Omer Tonight',
-    body: `It's night ${row.active_day} of the Omer. Open OmerLock to count — takes 10 seconds.`,
+    body: `It's night ${row.day} of the Omer. Open OmerLock to count — takes 10 seconds.`,
     sound: 'default',
     priority: 'high',
-    data: { kind: 'omer_push', day: row.active_day }
+    data: { kind: 'omer_push', day: row.day }
   }));
 
-  // Send in batches of 100 (Expo limit)
   let sent = 0;
   for (let i = 0; i < messages.length; i += EXPO_BATCH_SIZE) {
     const batch = messages.slice(i, i + EXPO_BATCH_SIZE);

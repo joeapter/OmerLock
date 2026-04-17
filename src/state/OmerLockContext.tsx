@@ -25,6 +25,7 @@ import { prewarmLocationCache } from '../services/locationService';
 import { loadState, saveState } from '../services/storageService';
 import { syncPendingEvents, syncSnapshot } from '../services/syncService';
 import { markPushTokenCounted, syncPushToken } from '../services/pushTokenService';
+import { suggestUpdateIfNeeded } from '../services/updateService';
 import {
   CompletionMethod,
   OmerCycleState,
@@ -363,7 +364,8 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
       day: runtime.activeDay,
       tzeit: runtime.tzeitToday,
       includeBracha: brachaAllowed,
-      settings: state.settings
+      settings: state.settings,
+      coords: state.lastKnownCoords ?? undefined
     }).catch(() => undefined);
 
     // Register/refresh this device in Supabase so the hourly server-side cron
@@ -372,7 +374,9 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
       runtime.activeDay,
       runtime.tzeitToday,
       runtime.cycleKey,
-      isTodayCompleted
+      isTodayCompleted,
+      state.settings.fallbackTzeit,
+      state.lastKnownCoords ?? undefined
     ).catch(() => undefined);
   }, [
     runtime.inSefira,
@@ -418,7 +422,14 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
       // Only clear tonight's intensive burst.
       await clearBurstNotifications();
       // Tell the server immediately so the next hourly cron skips this device.
-      markPushTokenCounted().catch(() => undefined);
+      markPushTokenCounted(currentRuntime.activeDay).catch(() => undefined);
+      // Suggest an update if one is available — delayed so the count modal
+      // fully dismisses before the alert appears.
+      setTimeout(() => {
+        suggestUpdateIfNeeded(
+          'A newer version of OmerLock is available with improved reminder timing. Update when you get a chance.'
+        ).catch(() => undefined);
+      }, 1500);
     },
     [commitState]
   );
