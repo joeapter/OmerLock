@@ -1,8 +1,8 @@
 // pushTokenService.ts
 //
-// Registers this device's Expo push token in Supabase and writes a 5-night
-// schedule so the server-side cron can push at the correct nightfall time for
-// each upcoming night — even if the app is never opened on those nights.
+// Registers this device's Expo push token in Supabase and writes the full
+// remaining-Omer schedule so the server-side cron can push at nightfall for
+// every upcoming night — even if the app is never opened again.
 //
 // Key insight: tzeit is computed on the device from the user's location and
 // stored as a UTC timestamp. The server does tzeit_utc <= now() — no timezone
@@ -20,7 +20,7 @@ const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const SUPABASE_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 const PROJECT_ID = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
 
-const NIGHTS_AHEAD = 5;
+const HEBCAL_NIGHTS = 5; // nights to fetch via Hebcal API (location-accurate)
 
 const getClient = () => {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
@@ -78,9 +78,10 @@ export const syncPushToken = async (
     // non-fatal
   }
 
-  // Build the 5-night schedule: tonight + the next NIGHTS_AHEAD nights.
-  // Each gets its own resolveZmanim call so the tzeit is accurate for that
-  // specific calendar date — never just copying tonight's clock time forward.
+  // Build the full remaining-Omer schedule: tonight + every remaining night.
+  // First HEBCAL_NIGHTS use resolveZmanim for location-accurate tzeit.
+  // Beyond that, addDays copies tonight's clock time (~2 min/day drift) —
+  // close enough for the hourly cron, and refreshed when the app next opens.
   const rows: Array<{
     token: string;
     day: number;
@@ -90,6 +91,8 @@ export const syncPushToken = async (
     updated_at: string;
   }> = [];
 
+  const now = new Date().toISOString();
+
   // Tonight (day n, tzeit already computed)
   rows.push({
     token,
@@ -97,22 +100,24 @@ export const syncPushToken = async (
     tzeit_utc: tzeit.toISOString(),
     counted,
     cycle_key: cycleKey,
-    updated_at: new Date().toISOString()
+    updated_at: now
   });
 
-  // Upcoming nights
-  for (let n = 1; n <= NIGHTS_AHEAD; n++) {
+  // All remaining nights up to day 49
+  const remainingNights = 49 - day;
+  for (let n = 1; n <= remainingNights; n++) {
     const futureDay = day + n;
-    if (futureDay > 49) break;
-
     const futureDate = addDays(tzeit, n);
 
     let futureTzeit: Date;
-    try {
-      const zmanim = await resolveZmanim(futureDate, fallbackTzeit, coords);
-      futureTzeit = zmanim.tzeit;
-    } catch {
-      // Fallback: shift tonight's tzeit by n days (imprecise but safe)
+    if (n <= HEBCAL_NIGHTS) {
+      try {
+        const zmanim = await resolveZmanim(futureDate, fallbackTzeit, coords);
+        futureTzeit = zmanim.tzeit;
+      } catch {
+        futureTzeit = futureDate;
+      }
+    } else {
       futureTzeit = futureDate;
     }
 
@@ -120,9 +125,9 @@ export const syncPushToken = async (
       token,
       day: futureDay,
       tzeit_utc: futureTzeit.toISOString(),
-      counted: false, // future nights are always uncounted
+      counted: false,
       cycle_key: cycleKey,
-      updated_at: new Date().toISOString()
+      updated_at: now
     });
   }
 

@@ -13,20 +13,20 @@ const CHANNEL_EXTREME = 'omerlock-max-persistent';
 // iOS hard limit: 64 scheduled local notifications total.
 //
 // Budget per scheduling cycle:
-//  20   omer_future        — 5 nights × 4 reminders, each at ACCURATE tzeit
-//  15   omer_burst         — tonight's intensive burst (post-open)
-//   5   omer_snooze        — reserved for snooze taps
+//  48   omer_future   — up to 48 nights × 1 reminder each, exactly at tzeit
+//  15   omer_burst    — tonight's intensive burst (post-open)
+//   1   omer_snooze   — reserved for snooze taps (burst clears when snoozed)
 //  ─────
-//  40   total (well under 64)
+//  64   max total (only on night 1 of the Omer; always ≤ 63 during current season)
 //
-// Key design:
-//   omer_future uses resolveZmanim() for EACH future date, so tzeit shifts
-//   correctly as days get longer. Never reuses tonight's clock time.
+// Key design: one notification per remaining Omer night fires exactly at that
+// night's nightfall. This covers the whole rest of the season from a single
+// app open. First HEBCAL_NIGHTS nights use resolveZmanim() for location-accurate
+// tzeit; beyond that, addDays copies tonight's clock time (off by ~2 min/day,
+// refreshed whenever the app is opened again).
 
 const BURST_LIMIT = 15;
-const FUTURE_NIGHTS = 5;
-// Offsets in minutes past that night's actual tzeit
-const FUTURE_OFFSETS_MINUTES = [0, 20, 45, 90];
+const HEBCAL_NIGHTS = 5;
 
 Notifications.setNotificationHandler({
   handleNotification: async () =>
@@ -235,57 +235,53 @@ export const scheduleNightReminders = async ({
 
   const now = Date.now();
 
-  // ── Future nights — each with its OWN accurate tzeit ────────────────
-  // For each of the next FUTURE_NIGHTS nights, call resolveZmanim with the
-  // correct calendar date to get the real nightfall time for that night.
-  // This is critical as tzeit shifts 1–2 min per day during spring.
-  // Using addDays(tonight, n) would copy tonight's clock time to all future
-  // nights — off by minutes to half an hour by the end of the Omer.
-  for (let n = 1; n <= FUTURE_NIGHTS; n++) {
-    const futureDay = day + n;
-    if (futureDay > 49) break;
+  // ── Future nights ─────────────────────────────────────────────────────
+  // One notification per remaining Omer night, fired exactly at that night's
+  // nightfall. Scheduling all remaining nights in one pass means the user only
+  // needs to open the app once and reminders cover the rest of the season.
+  //
+  // First HEBCAL_NIGHTS nights: resolveZmanim() for location-accurate tzeit.
+  // Beyond that: addDays copies tonight's clock time (~2 min/day drift, but
+  // refreshed to accurate times whenever the app opens again).
+  const futureNights = Math.min(49 - day, 48);
 
+  for (let n = 1; n <= futureNights; n++) {
+    const futureDay = day + n;
     const futureDate = addDays(tzeit, n);
 
-    // Compute the actual tzeit for this specific calendar date
     let futureTzeit: Date;
-    try {
-      const zmanim = await resolveZmanim(futureDate, settings.fallbackTzeit, coords);
-      futureTzeit = zmanim.tzeit;
-    } catch {
-      // Fallback: use tonight's tzeit shifted by n days (better than nothing)
+    if (n <= HEBCAL_NIGHTS) {
+      try {
+        const zmanim = await resolveZmanim(futureDate, settings.fallbackTzeit, coords);
+        futureTzeit = zmanim.tzeit;
+      } catch {
+        futureTzeit = futureDate;
+      }
+    } else {
       futureTzeit = futureDate;
     }
 
-    for (const offsetMin of FUTURE_OFFSETS_MINUTES) {
-      const fireAt = new Date(futureTzeit.getTime() + offsetMin * 60_000);
-      if (fireAt.getTime() <= now) continue;
+    const fireAt = new Date(futureTzeit.getTime());
+    if (fireAt.getTime() <= now) continue;
 
-      const level = offsetMin >= 90 ? 2 : offsetMin >= 45 ? 1 : 0;
-      const futureBody = getNotificationBody(
-        futureDay,
-        settings.nusach,
-        false, // bracha eligibility can't be known ahead of time
-        settings.omerPreposition
-      );
+    const futureBody = getNotificationBody(
+      futureDay,
+      settings.nusach,
+      false,
+      settings.omerPreposition
+    );
 
-      const title =
-        offsetMin === 0
-          ? `🕯️ Count the Omer — Night ${futureDay}`
-          : `🕯️ Still waiting on night ${futureDay}`;
-
-      await Notifications.scheduleNotificationAsync({
-        content: buildNotificationContent(title, futureBody, {
-          kind: 'omer_future',
-          day: futureDay,
-          offsetMin
-        }),
-        trigger: triggerFromDate(fireAt, level)
-      });
-    }
+    await Notifications.scheduleNotificationAsync({
+      content: buildNotificationContent(
+        `🕯️ Count the Omer — Night ${futureDay}`,
+        futureBody,
+        { kind: 'omer_future', day: futureDay, offsetMin: 0 }
+      ),
+      trigger: triggerFromDate(fireAt, 0)
+    });
   }
 
-  // ── 3. Tonight's burst ────────────────────────────────────────────────
+  // ── Tonight's burst ────────────────────────────────────────────────────
   // Intensive reminders for tonight only. These fire after the app is opened
   // (since that's when this function runs), which means they land on top of
   // whatever future reminders existed. They clear on count.
