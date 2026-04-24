@@ -111,7 +111,7 @@ using (true);
 
 -- Seed the initial value. Update this in the dashboard to trigger update prompts.
 insert into public.app_config (key, value)
-values ('min_version', '1.0.0')
+values ('min_version', '1.4.0')
 on conflict (key) do nothing;
 
 -- ─── Cron job ────────────────────────────────────────────────────────────────

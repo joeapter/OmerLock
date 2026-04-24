@@ -32,11 +32,11 @@ const EN_TENS: Record<number, string> = {
 
 const HE_UNDER_11: Record<number, string> = {
   1: 'אחד',
-  2: 'שני',
-  3: 'שלושה',
+  2: 'שנים',
+  3: 'שלשה',
   4: 'ארבעה',
-  5: 'חמישה',
-  6: 'שישה',
+  5: 'חמשה',
+  6: 'ששה',
   7: 'שבעה',
   8: 'שמונה',
   9: 'תשעה',
@@ -46,10 +46,10 @@ const HE_UNDER_11: Record<number, string> = {
 const HE_TEENS: Record<number, string> = {
   11: 'אחד עשר',
   12: 'שנים עשר',
-  13: 'שלושה עשר',
+  13: 'שלשה עשר',
   14: 'ארבעה עשר',
-  15: 'חמישה עשר',
-  16: 'שישה עשר',
+  15: 'חמשה עשר',
+  16: 'ששה עשר',
   17: 'שבעה עשר',
   18: 'שמונה עשר',
   19: 'תשעה עשר'
@@ -57,7 +57,7 @@ const HE_TEENS: Record<number, string> = {
 
 const HE_TENS: Record<number, string> = {
   20: 'עשרים',
-  30: 'שלושים',
+  30: 'שלשים',
   40: 'ארבעים'
 };
 
@@ -105,7 +105,7 @@ const toHebrewNumber = (value: number): string => {
     return getHebrewTens(tens);
   }
 
-  return `${getHebrewTens(tens)} ו${getHebrewUnder11(unit)}`;
+  return `${getHebrewUnder11(unit)} ו${getHebrewTens(tens)}`;
 };
 
 const hebrewDayCount = (day: number): string => {
