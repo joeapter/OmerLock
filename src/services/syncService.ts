@@ -4,13 +4,11 @@ import NetInfo from '@react-native-community/netinfo';
 import { createClient } from '@supabase/supabase-js';
 
 import { OmerCycleState, SyncEvent } from '../types';
-
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+import { SUPABASE_ANON_KEY, SUPABASE_URL, warnMissingSupabaseConfig } from './supabaseConfig';
 
 const client =
-  SUPABASE_URL && SUPABASE_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_KEY, {
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         auth: {
           persistSession: false,
           autoRefreshToken: false,
@@ -18,6 +16,10 @@ const client =
         }
       })
     : null;
+
+if (!client) {
+  warnMissingSupabaseConfig('syncService');
+}
 
 export const isSyncEnabled = (): boolean => Boolean(client);
 
@@ -49,6 +51,7 @@ export const syncPendingEvents = async (
   const { error } = await client.from('omer_events').upsert(rows, { onConflict: 'id' });
 
   if (error) {
+    console.warn('[sync] Failed to sync pending events.', error.message);
     return events;
   }
 
@@ -64,7 +67,7 @@ export const syncSnapshot = async (state: OmerCycleState): Promise<void> => {
     return;
   }
 
-  await client.from('omer_state').upsert({
+  const { error } = await client.from('omer_state').upsert({
     cycle_key: state.cycleKey,
     payload: {
       completions: state.completions,
@@ -77,4 +80,8 @@ export const syncSnapshot = async (state: OmerCycleState): Promise<void> => {
     },
     updated_at: new Date().toISOString()
   });
+
+  if (error) {
+    console.warn('[sync] Failed to sync snapshot.', error.message);
+  }
 };

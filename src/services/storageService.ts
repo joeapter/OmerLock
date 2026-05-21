@@ -10,7 +10,7 @@ const sanitizeReminderMinutes = (value: unknown, fallback: number): number => {
   if (!Number.isFinite(num)) {
     return fallback;
   }
-  return Math.min(30, Math.max(3, Math.round(num)));
+  return Math.min(60, Math.max(3, Math.round(num)));
 };
 
 const sanitizeSnoozeMinutes = (value: unknown, fallback: 10 | 20 | 30): 10 | 20 | 30 => {
@@ -40,7 +40,8 @@ const sanitizeSettings = (
   ),
   fallbackTzeit: partial?.fallbackTzeit ?? fallback.fallbackTzeit,
   hardcoreMode: partial?.hardcoreMode ?? fallback.hardcoreMode,
-  escalationEnabled: partial?.escalationEnabled ?? fallback.escalationEnabled
+  escalationEnabled: partial?.escalationEnabled ?? fallback.escalationEnabled,
+  morningCatchupEnabled: partial?.morningCatchupEnabled ?? fallback.morningCatchupEnabled
 });
 
 const migrateState = (

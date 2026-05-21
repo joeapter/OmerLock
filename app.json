@@ -2,7 +2,7 @@
   "expo": {
     "name": "OmerLock",
     "slug": "omerlock",
-    "version": "1.4.0",
+    "version": "1.5",
     "icon": "./assets/icon-1024.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -56,6 +56,8 @@
     ],
     "extra": {
       "fallbackTzeit": "20:30",
+      "supabaseUrl": "https://vhebjdkxiyrqpkwuczbn.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZoZWJqZGt4aXlycXBrd3VjemJuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4NDQwMzUsImV4cCI6MjA4OTQyMDAzNX0.CLVNv6Yl2avvoVijUpXo0Nn0Pxcko8r-0FaqX3fs0EY",
       "eas": {
         "projectId": "dfeba93f-4894-4912-8e15-8a8258dbe9b9"
       }

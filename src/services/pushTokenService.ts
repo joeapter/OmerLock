@@ -8,23 +8,28 @@
 // stored as a UTC timestamp. The server does tzeit_utc <= now() — no timezone
 // math needed server-side.
 
-import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { createClient } from '@supabase/supabase-js';
 
 import { LatLng } from '../types';
 import { addDays } from '../utils/date';
 import { resolveZmanim } from './hebcalService';
-
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-const PROJECT_ID = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
+import {
+  EAS_PROJECT_ID,
+  SUPABASE_ANON_KEY,
+  SUPABASE_URL,
+  warnMissingSupabaseConfig
+} from './supabaseConfig';
 
 const HEBCAL_NIGHTS = 5; // nights to fetch via Hebcal API (location-accurate)
 
 const getClient = () => {
-  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
-  return createClient(SUPABASE_URL, SUPABASE_KEY, {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    warnMissingSupabaseConfig('pushTokenService');
+    return null;
+  }
+
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
   });
 };
@@ -33,13 +38,17 @@ let cachedToken: string | null = null;
 
 const getPushToken = async (): Promise<string | null> => {
   if (cachedToken) return cachedToken;
-  if (!PROJECT_ID) return null;
+  if (!EAS_PROJECT_ID) {
+    console.warn('[push] Missing Expo projectId, cannot fetch push token.');
+    return null;
+  }
 
   try {
-    const result = await Notifications.getExpoPushTokenAsync({ projectId: PROJECT_ID });
+    const result = await Notifications.getExpoPushTokenAsync({ projectId: EAS_PROJECT_ID });
     cachedToken = result.data;
     return cachedToken;
-  } catch {
+  } catch (error) {
+    console.warn('[push] Failed to fetch Expo push token.', error);
     return null;
   }
 };
@@ -47,13 +56,15 @@ const getPushToken = async (): Promise<string | null> => {
 // Called whenever the runtime is refreshed (app open, foreground resume).
 // Writes a schedule row for tonight + each of the next NIGHTS_AHEAD nights,
 // each with its own accurate tzeit_utc computed from the user's location.
+// Pass tzeitTimes (the season cache) to skip redundant Hebcal API calls.
 export const syncPushToken = async (
   day: number,
   tzeit: Date,
   cycleKey: string,
   counted: boolean,
   fallbackTzeit: string,
-  coords?: LatLng
+  coords?: LatLng,
+  tzeitTimes?: Record<number, string>
 ): Promise<void> => {
   const client = getClient();
   if (!client) return;
@@ -63,7 +74,7 @@ export const syncPushToken = async (
 
   // Keep push_tokens in sync for backwards compat (used by old cron logic)
   try {
-    await client.from('push_tokens').upsert(
+    const { error } = await client.from('push_tokens').upsert(
       {
         token,
         tzeit_utc: tzeit.toISOString(),
@@ -74,8 +85,12 @@ export const syncPushToken = async (
       },
       { onConflict: 'token' }
     );
-  } catch {
-    // non-fatal
+
+    if (error) {
+      console.warn('[push] Failed to upsert push_tokens row.', error.message);
+    }
+  } catch (error) {
+    console.warn('[push] Failed to write push_tokens row.', error);
   }
 
   // Build the full remaining-Omer schedule: tonight + every remaining night.
@@ -110,7 +125,10 @@ export const syncPushToken = async (
     const futureDate = addDays(tzeit, n);
 
     let futureTzeit: Date;
-    if (n <= HEBCAL_NIGHTS) {
+    const cachedTime = tzeitTimes?.[futureDay];
+    if (cachedTime) {
+      futureTzeit = new Date(cachedTime);
+    } else if (n <= HEBCAL_NIGHTS) {
       try {
         const zmanim = await resolveZmanim(futureDate, fallbackTzeit, coords);
         futureTzeit = zmanim.tzeit;
@@ -132,11 +150,15 @@ export const syncPushToken = async (
   }
 
   try {
-    await client
+    const { error } = await client
       .from('push_schedule')
       .upsert(rows, { onConflict: 'token,day' });
-  } catch {
-    // non-fatal
+
+    if (error) {
+      console.warn('[push] Failed to upsert push_schedule rows.', error.message);
+    }
+  } catch (error) {
+    console.warn('[push] Failed to write push_schedule rows.', error);
   }
 };
 
@@ -153,7 +175,7 @@ export const markPushTokenCounted = async (day: number): Promise<void> => {
 
   // Mark in both tables
   try {
-    await Promise.all([
+    const [tokenResult, scheduleResult] = await Promise.all([
       client
         .from('push_tokens')
         .update({ counted: true, updated_at: now })
@@ -164,7 +186,18 @@ export const markPushTokenCounted = async (day: number): Promise<void> => {
         .eq('token', token)
         .eq('day', day)
     ]);
-  } catch {
-    // non-fatal
+
+    if (tokenResult.error) {
+      console.warn('[push] Failed to mark push_tokens row counted.', tokenResult.error.message);
+    }
+
+    if (scheduleResult.error) {
+      console.warn(
+        '[push] Failed to mark push_schedule row counted.',
+        scheduleResult.error.message
+      );
+    }
+  } catch (error) {
+    console.warn('[push] Failed to mark push rows counted.', error);
   }
 };

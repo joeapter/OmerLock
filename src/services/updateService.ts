@@ -2,15 +2,18 @@ import { Alert, Linking } from 'react-native';
 
 import Constants from 'expo-constants';
 import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_ANON_KEY, SUPABASE_URL, warnMissingSupabaseConfig } from './supabaseConfig';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 // App Store product page (ascAppId from eas.json)
 const APP_STORE_URL = 'https://apps.apple.com/app/id6761617604';
 
 const getClient = () => {
-  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
-  return createClient(SUPABASE_URL, SUPABASE_KEY, {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    warnMissingSupabaseConfig('updateService');
+    return null;
+  }
+
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
   });
 };
@@ -37,11 +40,16 @@ export const suggestUpdateIfNeeded = async (message?: string): Promise<void> => 
   if (!currentVersion) return;
 
   try {
-    const { data } = await client
+    const { data, error } = await client
       .from('app_config')
       .select('value')
       .eq('key', 'min_version')
       .single();
+
+    if (error) {
+      console.warn('[update] Failed to fetch min_version.', error.message);
+      return;
+    }
 
     const minVersion = data?.value as string | undefined;
     if (!minVersion) return;
@@ -59,7 +67,7 @@ export const suggestUpdateIfNeeded = async (message?: string): Promise<void> => 
         ]
       );
     }
-  } catch {
-    // Non-fatal — never interrupt the user over a version check
+  } catch (error) {
+    console.warn('[update] Version check failed.', error);
   }
 };

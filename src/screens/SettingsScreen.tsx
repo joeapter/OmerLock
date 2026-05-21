@@ -21,8 +21,12 @@ interface Props {
   onResetCycle: () => Promise<void>;
 }
 
-const frequencyOptions = [5, 10, 15];
 const snoozeOptions: Array<10 | 20 | 30> = [10, 20, 30];
+
+// Hardcore = every 10 min, escalation on, screen lock active
+// Chill    = every 60 min, escalation off
+const isHardcoreSelected = (s: SettingsState) => s.hardcoreMode && s.reminderBaseMinutes <= 15;
+const isChillSelected = (s: SettingsState) => !s.hardcoreMode && s.reminderBaseMinutes >= 45;
 
 export const SettingsScreen = ({
   settings,
@@ -68,25 +72,13 @@ export const SettingsScreen = ({
 
         <View style={styles.row}>
           <View style={styles.rowLabelGroup}>
-            <Text style={styles.rowLabel}>Hardcore mode</Text>
-            <Text style={styles.rowSubLabel}>Reminders every 5 min until you count</Text>
+            <Text style={styles.rowLabel}>Morning catch-up</Text>
+            <Text style={styles.rowSubLabel}>Hourly reminders 7am–12pm if you didn't count at night (no bracha)</Text>
           </View>
           <Switch
-            value={settings.hardcoreMode}
+            value={settings.morningCatchupEnabled}
             onValueChange={(value) =>
-              guarded(() => onUpdateSettings({ hardcoreMode: value }))
-            }
-            thumbColor={colors.textPrimary}
-            trackColor={{ false: '#3C4254', true: colors.accentMuted }}
-          />
-        </View>
-
-        <View style={styles.row}>
-          <Text style={styles.rowLabel}>Escalation reminders</Text>
-          <Switch
-            value={settings.escalationEnabled}
-            onValueChange={(value) =>
-              guarded(() => onUpdateSettings({ escalationEnabled: value }))
+              guarded(() => onUpdateSettings({ morningCatchupEnabled: value }))
             }
             thumbColor={colors.textPrimary}
             trackColor={{ false: '#3C4254', true: colors.accentMuted }}
@@ -150,29 +142,47 @@ export const SettingsScreen = ({
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Reminder cadence</Text>
+        <Text style={styles.sectionTitle}>Reminder mode</Text>
         <View style={styles.pillRow}>
-          {frequencyOptions.map((value) => (
-            <TouchableOpacity
-              key={value}
-              style={[
-                styles.pill,
-                settings.reminderBaseMinutes === value && styles.pillSelected
-              ]}
-              onPress={() =>
-                guarded(() => onUpdateSettings({ reminderBaseMinutes: value }))
-              }
-            >
-              <Text
-                style={[
-                  styles.pillLabel,
-                  settings.reminderBaseMinutes === value && styles.pillLabelSelected
-                ]}
-              >
-                Every {value}m
-              </Text>
-            </TouchableOpacity>
-          ))}
+          <TouchableOpacity
+            style={[styles.pill, styles.pillWide, isHardcoreSelected(settings) && styles.pillSelected]}
+            onPress={() =>
+              guarded(() =>
+                onUpdateSettings({
+                  hardcoreMode: true,
+                  reminderBaseMinutes: 10,
+                  escalationEnabled: true
+                })
+              )
+            }
+          >
+            <Text style={[styles.pillLabel, isHardcoreSelected(settings) && styles.pillLabelSelected]}>
+              Hardcore — every 10 min
+            </Text>
+            <Text style={[styles.pillSubLabel, isHardcoreSelected(settings) && styles.pillLabelSelected]}>
+              Screen lock · escalates after 30 min
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.pill, styles.pillWide, isChillSelected(settings) && styles.pillSelected]}
+            onPress={() =>
+              guarded(() =>
+                onUpdateSettings({
+                  hardcoreMode: false,
+                  reminderBaseMinutes: 60,
+                  escalationEnabled: false
+                })
+              )
+            }
+          >
+            <Text style={[styles.pillLabel, isChillSelected(settings) && styles.pillLabelSelected]}>
+              Chill — every hour
+            </Text>
+            <Text style={[styles.pillSubLabel, isChillSelected(settings) && styles.pillLabelSelected]}>
+              No lock screen · no escalation
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.secondaryLabel}>Default snooze</Text>
@@ -314,9 +324,20 @@ const styles = StyleSheet.create({
     borderColor: colors.accent,
     backgroundColor: '#123A31'
   },
+  pillWide: {
+    flex: 1,
+    paddingVertical: spacing.sm
+  },
   pillLabel: {
     color: colors.textSecondary,
     fontFamily: 'SpaceGrotesk_700Bold'
+  },
+  pillSubLabel: {
+    color: colors.textSecondary,
+    fontFamily: 'SpaceGrotesk_400Regular',
+    fontSize: 11,
+    opacity: 0.7,
+    marginTop: 2
   },
   hebrewPillLabel: {
     fontFamily: 'FrankRuhlLibre_600SemiBold',

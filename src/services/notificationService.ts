@@ -13,20 +13,21 @@ const CHANNEL_EXTREME = 'omerlock-max-persistent';
 // iOS hard limit: 64 scheduled local notifications total.
 //
 // Budget per scheduling cycle:
-//  48   omer_future   — up to 48 nights × 1 reminder each, exactly at tzeit
-//  15   omer_burst    — tonight's intensive burst (post-open)
-//   1   omer_snooze   — reserved for snooze taps (burst clears when snoozed)
+//  42   omer_future        — up to 42 future nights × 1 nightfall reminder each
+//  15   omer_burst         — tonight's burst (capped at 2am, so chill mode uses fewer)
+//   6   omer_morning_catchup — tomorrow 7am–12pm if not counted (cancelled on count)
+//   1   omer_snooze        — reserved for snooze taps
 //  ─────
-//  64   max total (only on night 1 of the Omer; always ≤ 63 during current season)
+//  64   max (night 1 with hardcore mode and morning catch-up both on)
 //
-// Key design: one notification per remaining Omer night fires exactly at that
-// night's nightfall. This covers the whole rest of the season from a single
-// app open. First HEBCAL_NIGHTS nights use resolveZmanim() for location-accurate
-// tzeit; beyond that, addDays copies tonight's clock time (off by ~2 min/day,
-// refreshed whenever the app is opened again).
+// If morningCatchupEnabled is off, future nights limit can be raised to 48.
+// Future nights use the tzeit cache when available (accurate for all 49 nights);
+// falls back to addDays for uncached nights (~2 min/day drift, refreshed on app open).
 
 const BURST_LIMIT = 15;
-const HEBCAL_NIGHTS = 5;
+// Any burst reminder scheduled for after this hour is suppressed.
+// Prevents chill-mode (60-min) reminders from bleeding into the morning.
+const BURST_END_HOUR = 2; // 2am
 
 Notifications.setNotificationHandler({
   handleNotification: async () =>
@@ -146,9 +147,9 @@ export const showPermissionDeniedAlert = (): void => {
 
 // ─── Clear functions ──────────────────────────────────────────────────────────
 //
-//  clearBurstNotifications   → clears only tonight's burst + snooze
+//  clearBurstNotifications   → clears tonight's burst, snooze, and morning catch-up.
 //                              Called when user counts. Does NOT touch omer_future
-//                              or omer_daily_safety, so future nights keep firing.
+//                              so future nights keep firing.
 //
 //  clearAllOmerNotifications → clears absolutely everything.
 //                              Called only when the Omer season ends or cycle resets.
@@ -157,7 +158,11 @@ export const clearBurstNotifications = async (): Promise<void> => {
   const scheduled = await Notifications.getAllScheduledNotificationsAsync();
   const toCancel = scheduled.filter((entry) => {
     const kind = (entry.content.data as Record<string, unknown>)?.kind;
-    return kind === 'omer_burst' || kind === 'omer_snooze';
+    return (
+      kind === 'omer_burst' ||
+      kind === 'omer_snooze' ||
+      kind === 'omer_morning_catchup'
+    );
   });
   await Promise.all(
     toCancel.map((e) => Notifications.cancelScheduledNotificationAsync(e.identifier))
@@ -172,6 +177,7 @@ export const clearAllOmerNotifications = async (): Promise<void> => {
       kind === 'omer_burst' ||
       kind === 'omer_snooze' ||
       kind === 'omer_future' ||
+      kind === 'omer_morning_catchup' ||
       kind === 'omer_daily_safety'
     );
   });
@@ -191,29 +197,35 @@ interface ReminderArgs {
   includeBracha: boolean;
   settings: SettingsState;
   coords?: LatLng;
+  tzeitTimes?: Record<number, string>; // season cache: day → ISO timestamp
 }
 
+// Builds burst timeline from nightfall until 2am.
+// Both hardcore and chill use reminderBaseMinutes — the mode difference is
+// just the interval (10 min vs 60 min) set in settings.
 const buildBurstTimeline = (
   tzeit: Date,
   baseFrequency: number,
-  escalationEnabled: boolean,
-  hardcoreMode: boolean
+  escalationEnabled: boolean
 ): Array<{ date: Date; level: number }> => {
   const points: Array<{ date: Date; level: number }> = [];
   let cursor = new Date(tzeit);
 
-  while (points.length < BURST_LIMIT) {
+  // 2am on the morning after tzeit
+  const burstCutoff = new Date(tzeit);
+  burstCutoff.setDate(burstCutoff.getDate() + 1);
+  burstCutoff.setHours(BURST_END_HOUR, 0, 0, 0);
+
+  while (points.length < BURST_LIMIT && cursor < burstCutoff) {
     const elapsed = minutesBetween(tzeit, cursor);
     const level = escalationEnabled ? (elapsed >= 90 ? 2 : elapsed >= 30 ? 1 : 0) : 0;
     points.push({ date: new Date(cursor), level });
 
-    const gap = hardcoreMode
-      ? 5
-      : level === 0
-        ? baseFrequency
-        : level === 1
-          ? Math.max(5, baseFrequency - 3)
-          : Math.max(3, baseFrequency - 5);
+    const gap = level === 0
+      ? baseFrequency
+      : level === 1
+        ? Math.max(5, baseFrequency - 3)
+        : Math.max(3, baseFrequency - 5);
 
     cursor = new Date(cursor.getTime() + gap * 60_000);
   }
@@ -226,7 +238,8 @@ export const scheduleNightReminders = async ({
   tzeit,
   includeBracha,
   settings,
-  coords
+  coords,
+  tzeitTimes
 }: ReminderArgs): Promise<void> => {
   const granted = await checkNotificationPermission();
   if (!granted) return;
@@ -235,30 +248,30 @@ export const scheduleNightReminders = async ({
 
   const now = Date.now();
 
-  // ── Future nights ─────────────────────────────────────────────────────
-  // One notification per remaining Omer night, fired exactly at that night's
-  // nightfall. Scheduling all remaining nights in one pass means the user only
-  // needs to open the app once and reminders cover the rest of the season.
-  //
-  // First HEBCAL_NIGHTS nights: resolveZmanim() for location-accurate tzeit.
-  // Beyond that: addDays copies tonight's clock time (~2 min/day drift, but
-  // refreshed to accurate times whenever the app opens again).
-  const futureNights = Math.min(49 - day, 48);
+  // ── Budget ─────────────────────────────────────────────────────────────────
+  // 42 future + 15 burst + 6 morning catch-up + 1 snooze = 64 (iOS max)
+  // When morningCatchupEnabled is off: 48 future + 15 burst + 1 snooze = 64
+  const futureNightsCap = settings.morningCatchupEnabled ? 42 : 48;
+  const futureNights = Math.min(49 - day, futureNightsCap);
 
+  // ── Future nights ─────────────────────────────────────────────────────────
+  // One nightfall reminder per remaining night. Uses tzeit cache for accuracy
+  // across the whole season; falls back to addDays for uncached nights.
   for (let n = 1; n <= futureNights; n++) {
     const futureDay = day + n;
     const futureDate = addDays(tzeit, n);
 
     let futureTzeit: Date;
-    if (n <= HEBCAL_NIGHTS) {
+    const cached = tzeitTimes?.[futureDay];
+    if (cached) {
+      futureTzeit = new Date(cached);
+    } else {
       try {
         const zmanim = await resolveZmanim(futureDate, settings.fallbackTzeit, coords);
         futureTzeit = zmanim.tzeit;
       } catch {
         futureTzeit = futureDate;
       }
-    } else {
-      futureTzeit = futureDate;
     }
 
     const fireAt = new Date(futureTzeit.getTime());
@@ -281,10 +294,8 @@ export const scheduleNightReminders = async ({
     });
   }
 
-  // ── Tonight's burst ────────────────────────────────────────────────────
-  // Intensive reminders for tonight only. These fire after the app is opened
-  // (since that's when this function runs), which means they land on top of
-  // whatever future reminders existed. They clear on count.
+  // ── Tonight's burst ────────────────────────────────────────────────────────
+  // Intensive reminders starting at nightfall, capped at 2am.
   const body = getNotificationBody(
     day,
     settings.nusach,
@@ -294,8 +305,7 @@ export const scheduleNightReminders = async ({
   const burstTimeline = buildBurstTimeline(
     tzeit,
     settings.reminderBaseMinutes,
-    settings.escalationEnabled,
-    settings.hardcoreMode
+    settings.escalationEnabled
   );
 
   const futureSlots = burstTimeline.filter((step) => step.date.getTime() > now);
@@ -312,6 +322,41 @@ export const scheduleNightReminders = async ({
       })
     )
   );
+
+  // ── Morning catch-up ───────────────────────────────────────────────────────
+  // If the user doesn't count tonight, hourly reminders fire the next morning
+  // (7am–12pm) prompting them to count without a bracha. Pre-scheduled here
+  // and cancelled at count time via clearBurstNotifications.
+  if (settings.morningCatchupEnabled) {
+    const catchupBody = getNotificationBody(
+      day,
+      settings.nusach,
+      false, // no bracha for daytime catch-up
+      settings.omerPreposition
+    );
+
+    // Next civil morning: take tzeit's date, advance one day, set hours 7–12
+    const nextMorningBase = new Date(tzeit);
+    nextMorningBase.setDate(nextMorningBase.getDate() + 1);
+    nextMorningBase.setSeconds(0, 0);
+
+    const morningHours = [7, 8, 9, 10, 11, 12];
+    await Promise.all(
+      morningHours.map((hour) => {
+        const fireAt = new Date(nextMorningBase);
+        fireAt.setHours(hour, 0, 0, 0);
+        if (fireAt.getTime() <= now) return Promise.resolve();
+        return Notifications.scheduleNotificationAsync({
+          content: buildNotificationContent(
+            `☀️ Still need to count — Night ${day}`,
+            `Count last night without a bracha.\n${catchupBody}`,
+            { kind: 'omer_morning_catchup', day }
+          ),
+          trigger: triggerFromDate(fireAt, 0)
+        });
+      })
+    );
+  }
 };
 
 export const scheduleSnoozeReminder = async (

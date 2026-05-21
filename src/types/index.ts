@@ -27,6 +27,7 @@ export interface SettingsState {
   fallbackTzeit: string;
   hardcoreMode: boolean;
   escalationEnabled: boolean;
+  morningCatchupEnabled: boolean;
 }
 
 export interface CompletionRecord {

@@ -23,6 +23,11 @@ import {
 import { computeRuntime, getCycleKey } from '../services/omerEngine';
 import { prewarmLocationCache } from '../services/locationService';
 import { loadState, saveState } from '../services/storageService';
+import {
+  fetchAllSeasonTzeitTimes,
+  loadTzeitCache,
+  saveTzeitCache
+} from '../services/tzeitCacheService';
 import { syncPendingEvents, syncSnapshot } from '../services/syncService';
 import { markPushTokenCounted, syncPushToken } from '../services/pushTokenService';
 import { suggestUpdateIfNeeded } from '../services/updateService';
@@ -123,7 +128,7 @@ const applySettingPatch = (
   };
 
   const reminder = Number(merged.reminderBaseMinutes);
-  const safeReminder = Number.isFinite(reminder) ? Math.min(30, Math.max(3, reminder)) : 10;
+  const safeReminder = Number.isFinite(reminder) ? Math.min(60, Math.max(3, reminder)) : 10;
 
   const snooze =
     merged.defaultSnoozeMinutes === 10 ||
@@ -151,6 +156,8 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
 
   const stateRef = useRef(state);
   const runtimeRef = useRef(runtime);
+  const tzeitCacheRef = useRef<Record<number, string> | null>(null);
+  const tzeitFetchingRef = useRef(false);
 
   useEffect(() => {
     stateRef.current = state;
@@ -204,6 +211,8 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
     let changed = false;
 
     if (currentState.cycleKey !== computed.cycleKey) {
+      // New Omer season — clear tzeit cache so it's re-fetched for this year
+      tzeitCacheRef.current = null;
       nextState = {
         ...makeDefaultState(computed.cycleKey),
         settings: currentState.settings,
@@ -275,12 +284,15 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
 
         const adjusted =
           persisted.cycleKey !== computed.cycleKey
-            ? {
-                ...makeDefaultState(computed.cycleKey),
-                settings: persisted.settings,
-                pendingSyncEvents: persisted.pendingSyncEvents,
-                lastKnownCoords: computed.resolvedCoords ?? persisted.lastKnownCoords
-              }
+            ? (() => {
+                tzeitCacheRef.current = null; // new season, clear cache
+                return {
+                  ...makeDefaultState(computed.cycleKey),
+                  settings: persisted.settings,
+                  pendingSyncEvents: persisted.pendingSyncEvents,
+                  lastKnownCoords: computed.resolvedCoords ?? persisted.lastKnownCoords
+                };
+              })()
             : {
                 ...persisted,
                 lastKnownCoords: computed.resolvedCoords ?? persisted.lastKnownCoords
@@ -348,36 +360,72 @@ export const OmerLockProvider = ({ children }: PropsWithChildren) => {
 
   useEffect(() => {
     if (!runtime.inSefira || runtime.activeDay === null || !runtime.tzeitToday) {
-      // Season over — kill everything including the daily safety trigger
+      // Season over — kill everything
       clearAllOmerNotifications().catch(() => undefined);
       return;
     }
 
     if (isTodayCompleted) {
-      // Tonight is done — clear the burst but KEEP the daily safety so
-      // it fires again tomorrow night without needing the app to be opened
+      // Tonight is done — clear burst + morning catch-up, keep future nights
       clearBurstNotifications().catch(() => undefined);
       return;
     }
 
-    scheduleNightReminders({
-      day: runtime.activeDay,
-      tzeit: runtime.tzeitToday,
-      includeBracha: brachaAllowed,
-      settings: state.settings,
-      coords: state.lastKnownCoords ?? undefined
-    }).catch(() => undefined);
+    const coords = stateRef.current.lastKnownCoords ?? undefined;
+    const cycleKey = runtime.cycleKey;
+    const activeDay = runtime.activeDay;
+    const tzeit = runtime.tzeitToday;
 
-    // Register/refresh this device in Supabase so the hourly server-side cron
-    // knows to push at nightfall even when the app is closed.
-    syncPushToken(
-      runtime.activeDay,
-      runtime.tzeitToday,
-      runtime.cycleKey,
-      isTodayCompleted,
-      state.settings.fallbackTzeit,
-      state.lastKnownCoords ?? undefined
-    ).catch(() => undefined);
+    (async () => {
+      // Load tzeit cache from storage if not already in memory
+      if (!tzeitCacheRef.current) {
+        const cached = await loadTzeitCache(cycleKey, coords);
+        if (cached) {
+          tzeitCacheRef.current = cached;
+        }
+      }
+
+      await scheduleNightReminders({
+        day: activeDay,
+        tzeit,
+        includeBracha: brachaAllowed,
+        settings: stateRef.current.settings,
+        coords,
+        tzeitTimes: tzeitCacheRef.current ?? undefined
+      });
+
+      // Kick off background fetch if cache is still missing.
+      // Non-blocking: notifications are already scheduled with addDays fallback.
+      if (!tzeitCacheRef.current && !tzeitFetchingRef.current) {
+        tzeitFetchingRef.current = true;
+        fetchAllSeasonTzeitTimes(
+          activeDay,
+          tzeit,
+          stateRef.current.settings.fallbackTzeit,
+          coords
+        )
+          .then(async (times) => {
+            tzeitCacheRef.current = times;
+            await saveTzeitCache(cycleKey, coords, times);
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            tzeitFetchingRef.current = false;
+          });
+      }
+
+      // Register/refresh this device in Supabase so the hourly server-side cron
+      // knows to push at nightfall even when the app is closed.
+      syncPushToken(
+        activeDay,
+        tzeit,
+        cycleKey,
+        isTodayCompleted,
+        stateRef.current.settings.fallbackTzeit,
+        coords,
+        tzeitCacheRef.current ?? undefined
+      ).catch(() => undefined);
+    })();
   }, [
     runtime.inSefira,
     runtime.activeDay,

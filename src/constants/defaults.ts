@@ -13,7 +13,8 @@ export const DEFAULT_SETTINGS: SettingsState = {
   defaultSnoozeMinutes: 10,
   fallbackTzeit,
   hardcoreMode: false,
-  escalationEnabled: true
+  escalationEnabled: true,
+  morningCatchupEnabled: true
 };
 
 export const makeDefaultState = (cycleKey: string): OmerCycleState => ({
